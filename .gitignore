@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.local
+coverage/
+*.log
+.DS_Store
+dist/
+.vscode/
+.idea/
+uploads/**
+!uploads/.gitkeep
+# Firebase / SMTP secrets — never commit
+secrets/**
+!secrets/.gitkeep
+**/firebase-service-account*.json
+**/serviceAccount*.json

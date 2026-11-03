@@ -1,0 +1,28 @@
+# Optional: Redis-only for local Node (npm run dev) against Docker Redis
+# Usage: docker compose -f docker-compose.dev.yml up -d
+# Then set REDIS_HOST=127.0.0.1 REDIS_PORT=6379 in .env
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: skillbee-redis-dev
+    restart: unless-stopped
+    # Empty REDIS_PASSWORD = no --requirepass (local testing). Set REDIS_PASSWORD for auth.
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+      - --requirepass
+      - ${REDIS_PASSWORD:-}
+    volumes:
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - skillbee_redis_dev_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  skillbee_redis_dev_data:

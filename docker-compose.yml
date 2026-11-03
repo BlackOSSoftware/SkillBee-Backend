@@ -1,0 +1,86 @@
+# SkillBee backend + Redis cache
+# MongoDB Atlas remains the primary database (not containerized).
+# Redis is NOT published to the host by default — backend-only on the internal network.
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: skillbee-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+      - --requirepass
+      - ${REDIS_PASSWORD:-skillbee-dev-redis-pass}
+    volumes:
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - skillbee_redis_data:/data
+    networks:
+      - skillbee_internal
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'redis-cli',
+          '-a',
+          '${REDIS_PASSWORD:-skillbee-dev-redis-pass}',
+          'ping',
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    # Uncomment ONLY for local debugging from the host (never in production):
+    # ports:
+    #   - "127.0.0.1:6379:6379"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: skillbee-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 5000
+      REDIS_ENABLED: ${REDIS_ENABLED:-true}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-skillbee-dev-redis-pass}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-skillbee:}
+    volumes:
+      - skillbee_uploads:/app/uploads
+    ports:
+      - "${API_HOST_PORT:-5000}:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - skillbee_internal
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+
+networks:
+  skillbee_internal:
+    driver: bridge
+
+volumes:
+  skillbee_redis_data:
+  skillbee_uploads:
