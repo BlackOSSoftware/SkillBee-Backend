@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import swaggerUi from 'swagger-ui-express';
 import { env } from './config/env.js';
+import { security } from './config/security.js';
 import { openApiSpec } from './docs/openapi.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { optionalAuthenticate } from './middleware/authenticate.js';
@@ -115,6 +116,11 @@ export function createApp() {
       data: {
         status: 'ok',
         env: env.NODE_ENV,
+        cookie: {
+          sameSite: security.cookie.sameSite,
+          secure: security.cookie.secure,
+          httpOnly: security.cookie.httpOnly,
+        },
         timestamp: new Date().toISOString(),
         redis: {
           enabled: redis.enabled,
