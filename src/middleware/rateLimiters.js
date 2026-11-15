@@ -1,9 +1,18 @@
 import rateLimit from 'express-rate-limit';
+import { ROLE_SLUGS } from '../config/security.js';
 import { env } from '../config/env.js';
+
+/** Roles exempt from the public limiter. req.role is only set by optionalAuthenticate
+ *  after a verified token + active user + active role — never client-supplied. */
+const RATE_LIMIT_EXEMPT_ROLES = new Set([ROLE_SLUGS.SUPER_ADMIN, ROLE_SLUGS.ADMIN]);
+
+const isDev = env.NODE_ENV === 'development';
 
 export const globalRateLimiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
-  max: env.RATE_LIMIT_MAX,
+  // Generous limits in development so local testing across apps is not blocked
+  max: isDev ? 10000 : env.RATE_LIMIT_MAX,
+  skip: (req) => RATE_LIMIT_EXEMPT_ROLES.has(req.role?.slug),
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -17,7 +26,7 @@ export const globalRateLimiter = rateLimit({
 
 export const authRateLimiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
-  max: env.AUTH_RATE_LIMIT_MAX,
+  max: isDev ? 1000 : env.AUTH_RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
   message: {

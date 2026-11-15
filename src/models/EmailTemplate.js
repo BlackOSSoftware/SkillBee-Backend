@@ -17,6 +17,8 @@ const emailTemplateSchema = new mongoose.Schema(
     variables: { type: [String], default: [] },
     isActive: { type: Boolean, default: true, index: true },
     isSystem: { type: Boolean, default: false },
+    /** Built-in design revision — system templates are upgraded when this is bumped. */
+    designVersion: { type: Number, default: 0 },
   },
   { timestamps: true, versionKey: false }
 );
@@ -32,6 +34,7 @@ emailTemplateSchema.methods.toSafeObject = function toSafeObject() {
     variables: this.variables || [],
     isActive: this.isActive,
     isSystem: this.isSystem,
+    designVersion: this.designVersion ?? 0,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

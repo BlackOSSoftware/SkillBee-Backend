@@ -21,6 +21,7 @@ import { newsletterOpenApiPaths, newsletterOpenApiTags } from './newsletter.open
 import { referralsOpenApiPaths, referralsOpenApiTags } from './referrals.openapi.js';
 import { faqsOpenApiPaths, faqsOpenApiTags } from './faqs.openapi.js';
 import { blogsOpenApiPaths, blogsOpenApiTags } from './blogs.openapi.js';
+import { contactOpenApiPaths, contactOpenApiTags } from './contact.openapi.js';
 
 const errorSchema = {
   type: 'object',
@@ -111,6 +112,7 @@ export const openApiSpec = {
     ...referralsOpenApiTags,
     ...faqsOpenApiTags,
     ...blogsOpenApiTags,
+    ...contactOpenApiTags,
   ],
   components: {
     securitySchemes: {
@@ -364,5 +366,6 @@ export const openApiSpec = {
     ...referralsOpenApiPaths,
     ...faqsOpenApiPaths,
     ...blogsOpenApiPaths,
+    ...contactOpenApiPaths,
   },
 };

@@ -67,11 +67,12 @@ export async function processEmailJob(jobData) {
     });
 
     if (result.skipped) {
-      // Treat as soft-fail without exhausting retries when SMTP disabled
-      log.status = EMAIL_LOG_STATUS.FAILED;
+      // SMTP disabled/unconfigured: record as simulated — never claim delivery,
+      // and never burn retries for a transport that cannot send.
+      log.status = EMAIL_LOG_STATUS.SIMULATED;
       log.lastError = String(result.reason || 'smtp_skipped').slice(0, 1000);
       await log.save();
-      return { ok: false, skipped: true, reason: result.reason };
+      return { ok: false, skipped: true, simulated: true, reason: result.reason };
     }
 
     log.status = EMAIL_LOG_STATUS.SENT;

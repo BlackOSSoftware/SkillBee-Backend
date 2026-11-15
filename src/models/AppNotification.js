@@ -57,6 +57,8 @@ const appNotificationSchema = new mongoose.Schema(
     deliveryMeta: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
     /** Idempotency: unique per recipient+event */
     eventKey: { type: String, trim: true, maxlength: 200, default: null },
+    /** Bulk notification campaign ID — groups recipient records from one admin action. */
+    campaignId: { type: String, trim: true, maxlength: 200, default: null, index: true },
     deletedAt: { type: Date, default: null, index: true },
   },
   { timestamps: true, versionKey: false }
@@ -86,6 +88,7 @@ appNotificationSchema.methods.toSafeObject = function toSafeObject() {
     readAt: this.readAt,
     createdBy: this.createdBy?.toString?.() || null,
     deliveryStatus: this.deliveryStatus,
+    campaignId: this.campaignId || null,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

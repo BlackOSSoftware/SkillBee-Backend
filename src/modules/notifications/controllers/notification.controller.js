@@ -46,6 +46,24 @@ export async function listAdminNotifications(req, res, next) {
   }
 }
 
+export async function listCampaigns(req, res, next) {
+  try {
+    const result = await notificationService.listCampaigns(req.query);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getCampaign(req, res, next) {
+  try {
+    const data = await notificationService.getCampaign(req.params.campaignId);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function createAdminNotification(req, res, next) {
   try {
     const data = await notificationService.createAdminNotification(req, req.body);

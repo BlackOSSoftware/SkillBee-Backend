@@ -47,14 +47,18 @@ roleSchema.statics.ensureDefaults = async function ensureDefaults() {
       this.findOneAndUpdate(
         { slug: role.slug },
         {
-          name: role.name,
-          slug: role.slug,
-          description: role.description,
-          permissions: role.permissions,
-          isSystem: role.isSystem,
-          isActive: true,
+          $set: {
+            name: role.name,
+            slug: role.slug,
+            description: role.description,
+            isSystem: role.isSystem,
+            isActive: true,
+          },
+          // Permissions are only seeded on first insert — admin-assigned
+          // permission changes must survive server restarts.
+          $setOnInsert: { permissions: role.permissions },
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, new: true }
       )
     )
   );

@@ -31,3 +31,12 @@ export const getCurriculum = asyncHandler(async (req, res) => {
   );
   res.json({ success: true, data: curriculum });
 });
+
+export const registerFree = asyncHandler(async (req, res) => {
+  const result = await publicCourseService.registerFreeCourseLead(
+    req,
+    req.params.slug,
+    req.body
+  );
+  res.status(201).json({ success: true, data: result });
+});

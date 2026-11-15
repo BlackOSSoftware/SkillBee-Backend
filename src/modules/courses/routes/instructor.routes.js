@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../../../middleware/authenticate.js';
-import { requireAdminAccess, requirePermissions } from '../../../middleware/authorize.js';
+import { requirePermissions } from '../../../middleware/authorize.js';
 import { validateRequest } from '../../../middleware/validate.js';
 import { PERMISSIONS, USER_STATUS } from '../../../config/security.js';
 import * as instructorController from '../controllers/instructor.controller.js';
@@ -11,7 +11,6 @@ const router = Router();
 
 router.use(
   authenticate,
-  requireAdminAccess(),
   requirePermissions(PERMISSIONS.COURSES_INSTRUCTORS_MANAGE)
 );
 

@@ -6,7 +6,74 @@ import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { env } from '../../../config/env.js';
 import { getTempRoot, getUploadRoot, resolveInsideRoot } from '../../media/utils/storagePath.js';
+import { MediaAsset } from '../../../models/MediaAsset.js';
 import { AppError } from '../../../utils/AppError.js';
+
+const IMAGE_FETCH_TIMEOUT_MS = 10_000;
+const IMAGE_FETCH_MAX_BYTES = 8 * 1024 * 1024;
+
+function isCloudinaryDeliveryUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'res.cloudinary.com';
+  } catch {
+    return false;
+  }
+}
+
+/** pdfkit embeds only JPEG and PNG, so Cloudinary is asked to deliver PNG. */
+function pngDeliveryUrl(secureUrl) {
+  return secureUrl.includes('/image/upload/f_png/') ? secureUrl : secureUrl.replace('/image/upload/', '/image/upload/f_png/');
+}
+
+async function fetchCloudinaryImage(url) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS), redirect: 'error' });
+  if (!res.ok) throw new Error(`image fetch ${res.status}`);
+  const type = res.headers.get('content-type') || '';
+  if (!/^image\/(png|jpeg)/.test(type)) throw new Error(`unsupported image type ${type}`);
+  const declared = Number(res.headers.get('content-length') || 0);
+  if (declared > IMAGE_FETCH_MAX_BYTES) throw new Error('image too large');
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length > IMAGE_FETCH_MAX_BYTES) throw new Error('image too large');
+  return buffer;
+}
+
+/**
+ * Resolves a template image to something pdfkit can draw: a local file under the upload root, or
+ * a PNG buffer for a Cloudinary image asset. Only Cloudinary delivery URLs are ever fetched.
+ * Returns null when the image is missing or unreadable so the PDF still renders.
+ */
+export async function resolveTemplateImage(mediaRef) {
+  if (!mediaRef) return null;
+  if (mediaRef.storageKey) {
+    try {
+      const absolute = resolveInsideRoot(getUploadRoot(), mediaRef.storageKey);
+      if (fs.existsSync(absolute)) return absolute;
+    } catch {
+      /* fall through to Cloudinary */
+    }
+  }
+  let url = null;
+  if (mediaRef.mediaAssetId) {
+    const asset = await MediaAsset.findOne({
+      _id: mediaRef.mediaAssetId,
+      deletedAt: null,
+      mediaType: 'image',
+      storageProvider: 'cloudinary',
+    })
+      .select('secureUrl')
+      .lean();
+    url = asset?.secureUrl || null;
+  }
+  if (!url && mediaRef.url) url = mediaRef.url;
+  if (!url || !isCloudinaryDeliveryUrl(url)) return null;
+  try {
+    return await fetchCloudinaryImage(pngDeliveryUrl(url));
+  } catch (err) {
+    console.warn('[certificate] template image skipped:', err.message);
+    return null;
+  }
+}
 
 function truncate(text, max) {
   const s = String(text || '');
@@ -60,6 +127,12 @@ export async function generateCertificatePdf({
   );
   const tempQr = path.join(tempRoot, `qr-${verificationCode.slice(0, 16)}-${Date.now()}.png`);
 
+  const [backgroundImage, organizationLogo, signatureImage] = await Promise.all([
+    resolveTemplateImage(templateSnapshot?.backgroundImage),
+    resolveTemplateImage(templateSnapshot?.organizationLogo),
+    resolveTemplateImage(templateSnapshot?.signatureImage),
+  ]);
+
   try {
     await QRCode.toFile(tempQr, verificationUrl, {
       type: 'png',
@@ -84,16 +157,24 @@ export async function generateCertificatePdf({
       stream.on('error', reject);
       doc.on('error', reject);
 
-      // Optional background — only if local storageKey resolves
-      tryEmbedImage(doc, templateSnapshot?.backgroundImage, 0, 0, pageWidth, pageHeight);
+      drawImage(doc, backgroundImage, 0, 0, { width: pageWidth, height: pageHeight });
+
+      const logoHeight = 44;
+      const logoDrawn = drawImage(doc, organizationLogo, pageWidth / 2 - 60, margin, {
+        fit: [120, logoHeight],
+        align: 'center',
+        valign: 'center',
+      });
 
       doc
         .fontSize(10)
         .fillColor('#555555')
-        .text(truncate(templateSnapshot?.organizationName || 'SkillBee', 80), margin, margin, {
-          width: pageWidth - margin * 2,
-          align: 'center',
-        });
+        .text(
+          truncate(templateSnapshot?.organizationName || 'SkillBee', 80),
+          margin,
+          logoDrawn ? margin + logoHeight + 8 : margin,
+          { width: pageWidth - margin * 2, align: 'center' }
+        );
 
       doc
         .moveDown(1.5)
@@ -168,7 +249,7 @@ export async function generateCertificatePdf({
 
       if (fields.showSignatory !== false && templateSnapshot?.authorizedSignatoryName) {
         const sigX = pageWidth - margin - 220;
-        tryEmbedImage(doc, templateSnapshot?.signatureImage, sigX, metaY - 40, 120, 40);
+        drawImage(doc, signatureImage, sigX, metaY - 40, { fit: [120, 40], valign: 'bottom' });
         doc
           .fontSize(11)
           .fillColor('#111111')
@@ -231,15 +312,14 @@ function formatDate(d) {
   }
 }
 
-function tryEmbedImage(doc, mediaRef, x, y, w, h) {
-  if (!mediaRef?.storageKey) return;
+/** Draws a resolved image (path or buffer); returns whether it was drawn. */
+function drawImage(doc, source, x, y, options) {
+  if (!source) return false;
   try {
-    const absolute = resolveInsideRoot(getUploadRoot(), mediaRef.storageKey);
-    if (fs.existsSync(absolute)) {
-      doc.image(absolute, x, y, { width: w, height: h });
-    }
+    doc.image(source, x, y, options);
+    return true;
   } catch {
-    /* skip missing/invalid assets */
+    return false;
   }
 }
 

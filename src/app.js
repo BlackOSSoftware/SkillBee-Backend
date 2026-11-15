@@ -7,6 +7,7 @@ import swaggerUi from 'swagger-ui-express';
 import { env } from './config/env.js';
 import { openApiSpec } from './docs/openapi.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { optionalAuthenticate } from './middleware/authenticate.js';
 import { globalRateLimiter } from './middleware/rateLimiters.js';
 import authRoutes from './routes/auth.routes.js';
 import adminRoutes from './routes/admin.routes.js';
@@ -31,6 +32,8 @@ import { mountNewsletterRoutes } from './modules/newsletter/routes/index.js';
 import { mountReferralRoutes } from './modules/referrals/routes/index.js';
 import { mountFaqRoutes } from './modules/faqs/routes/index.js';
 import { mountBlogRoutes } from './modules/blogs/routes/index.js';
+import { mountContactRoutes } from './modules/contact/routes/index.js';
+import { mountLiveApplicationRoutes } from './modules/liveApplications/routes/index.js';
 
 export function createApp() {
   const app = express();
@@ -57,7 +60,8 @@ export function createApp() {
   );
   app.use(
     cors({
-      origin: env.CLIENT_ORIGINS,
+      // Allowed frontend origins: student app (3000), admin console (3001), instructor console (3002)
+      origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
@@ -66,6 +70,7 @@ export function createApp() {
         'X-Upload-Token',
         'X-View-Token',
         'X-Playback-Token',
+        'X-App-Scope',
         'Range',
         'X-Razorpay-Signature',
         'PayPal-Transmission-Id',
@@ -88,6 +93,8 @@ export function createApp() {
   app.use(cookieParser());
 
   if (env.NODE_ENV !== 'test') {
+    // Resolve the session (non-blocking) so the limiter can exempt admin roles.
+    app.use(optionalAuthenticate);
     app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
     app.use(globalRateLimiter);
   }
@@ -164,9 +171,11 @@ export function createApp() {
   );
 
   app.use(`${env.API_PREFIX}/auth`, authRoutes);
-  // Mount course/media modules before Phase 1 /admin catch-paths for clearer routing
-  mountCourseRoutes(app, env.API_PREFIX);
+  // Mount media before courses: /learning/media/* must be handled by the media
+  // playback router (token-authorized stream). learning.routes has a
+  // router.use(authenticate) that would otherwise 401 those requests first.
   mountMediaRoutes(app, env.API_PREFIX);
+  mountCourseRoutes(app, env.API_PREFIX);
   mountQuizRoutes(app, env.API_PREFIX);
   mountAssignmentRoutes(app, env.API_PREFIX);
   mountEnrollmentRoutes(app, env.API_PREFIX);
@@ -181,6 +190,8 @@ export function createApp() {
   mountNewsletterRoutes(app, env.API_PREFIX);
   mountReferralRoutes(app, env.API_PREFIX);
   mountFaqRoutes(app, env.API_PREFIX);
+  mountContactRoutes(app, env.API_PREFIX);
+  mountLiveApplicationRoutes(app, env.API_PREFIX);
   mountBlogRoutes(app, env.API_PREFIX);
   app.use(`${env.API_PREFIX}/admin`, adminRoutes);
 

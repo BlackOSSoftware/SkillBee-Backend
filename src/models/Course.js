@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import {
   COURSE_LEVELS,
   COURSE_STATUS,
+  COURSE_TYPES,
   DURATION_UNITS,
   SUPPORTED_CURRENCIES,
 } from '../config/security.js';
@@ -39,6 +40,21 @@ const seoSchema = new mongoose.Schema(
     focusKeyword: { type: String, trim: true, maxlength: 100, default: '' },
     schemaType: { type: String, trim: true, maxlength: 80, default: 'Course' },
     schemaData: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
+  },
+  { _id: false }
+);
+
+const liveSessionSchema = new mongoose.Schema(
+  {
+    batchName: { type: String, trim: true, maxlength: 200, default: '' },
+    startDate: { type: Date, default: null },
+    endDate: { type: Date, default: null },
+    /** e.g. "Live Online", "Hybrid", "On-site" */
+    sessionMode: { type: String, trim: true, maxlength: 100, default: '' },
+    /** Free-text schedule description, e.g. "Mon/Wed/Fri 7-9 PM IST" */
+    sessionSchedule: { type: String, trim: true, maxlength: 2000, default: '' },
+    // Duration reuses durationValue/durationUnit, seats reuse
+    // enrollment.limitEnabled/maximumStudents, fee reuses pricing.
   },
   { _id: false }
 );
@@ -81,6 +97,13 @@ const courseSchema = new mongoose.Schema(
     instructorIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true }],
     level: { type: String, enum: COURSE_LEVELS, default: 'all_levels' },
     language: { type: String, trim: true, lowercase: true, default: 'en' },
+    /**
+     * Delivery type: FREE | PRE_RECORDED | LIVE_SESSION.
+     * Independent of categoryIds and pricing.type.
+     * Legacy documents may not have this field — use effectiveCourseType()
+     * which falls back to pricing.type (free→FREE, paid→PRE_RECORDED).
+     */
+    courseType: { type: String, enum: COURSE_TYPES, default: null, index: true },
     durationValue: { type: Number, min: 0, default: 0 },
     durationUnit: { type: String, enum: DURATION_UNITS, default: 'hours' },
     status: {
@@ -116,6 +139,8 @@ const courseSchema = new mongoose.Schema(
     },
     seo: { type: seoSchema, default: () => ({}) },
     pricing: { type: pricingSchema, default: () => ({}) },
+    /** LIVE_SESSION batch details — only meaningful when courseType is LIVE_SESSION. */
+    liveSession: { type: liveSessionSchema, default: () => ({}) },
 
     /** Aggregated from approved reviews only — recalculated on moderation changes */
     ratingStats: {
@@ -149,8 +174,18 @@ const courseSchema = new mongoose.Schema(
 courseSchema.index({ status: 1, deletedAt: 1, publishedAt: -1 });
 courseSchema.index({ status: 1, deletedAt: 1, isFeatured: 1, sortOrder: 1 });
 courseSchema.index({ status: 1, deletedAt: 1, categoryIds: 1, publishedAt: -1 });
+courseSchema.index({ courseType: 1, status: 1, deletedAt: 1, publishedAt: -1 });
 courseSchema.index({ createdAt: -1 });
 courseSchema.index({ title: 'text', shortDescription: 'text', tags: 'text' });
+
+/**
+ * Backward-compatible course type resolution.
+ * Explicit courseType wins; legacy docs fall back to pricing.type.
+ */
+courseSchema.methods.effectiveCourseType = function effectiveCourseType() {
+  if (this.courseType) return this.courseType;
+  return this.pricing?.type === 'free' ? 'FREE' : 'PRE_RECORDED';
+};
 
 courseSchema.methods.toAdminObject = function toAdminObject(extras = {}) {
   return {
@@ -181,6 +216,7 @@ courseSchema.methods.toAdminObject = function toAdminObject(extras = {}) {
       : undefined,
     level: this.level,
     language: this.language,
+    courseType: this.effectiveCourseType(),
     durationValue: this.durationValue,
     durationUnit: this.durationUnit,
     status: this.status,
@@ -196,6 +232,7 @@ courseSchema.methods.toAdminObject = function toAdminObject(extras = {}) {
     expiry: this.expiry,
     seo: this.seo,
     pricing: this.pricing,
+    liveSession: this.liveSession,
     ratingStats: this.ratingStats || {
       averageRating: 0,
       approvedReviewCount: 0,

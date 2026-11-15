@@ -2,6 +2,7 @@ import sanitizeHtml from 'sanitize-html';
 import { EmailTemplate } from '../../../models/EmailTemplate.js';
 import { AppError } from '../../../utils/AppError.js';
 import { slugify } from '../../../utils/slugify.js';
+import { DEFAULT_TEMPLATES, EMAIL_DESIGN_VERSION } from './defaultTemplates.js';
 
 export const ALLOWED_TEMPLATE_VARS = Object.freeze([
   'studentName',
@@ -17,102 +18,12 @@ export const ALLOWED_TEMPLATE_VARS = Object.freeze([
   'score',
   'assignmentTitle',
   'quizTitle',
+  'ticketNumber',
+  'enquiryNumber',
+  'previousStatus',
+  'newStatus',
+  'applicationNumber',
 ]);
-
-const DEFAULT_TEMPLATES = [
-  {
-    slug: 'welcome',
-    name: 'Welcome / Account Created',
-    subject: 'Welcome to SkillBee, {{studentName}}',
-    htmlBody: '<p>Hi {{studentName}},</p><p>Your SkillBee account ({{email}}) is ready.</p>',
-    textBody: 'Hi {{studentName}}, Your SkillBee account ({{email}}) is ready.',
-    variables: ['studentName', 'email'],
-  },
-  {
-    slug: 'course_enrollment',
-    name: 'Course Enrollment Confirmation',
-    subject: 'Enrolled: {{courseName}}',
-    htmlBody: '<p>Hi {{studentName}},</p><p>You are enrolled in <strong>{{courseName}}</strong>.</p>',
-    textBody: 'Hi {{studentName}}, You are enrolled in {{courseName}}.',
-    variables: ['studentName', 'courseName'],
-  },
-  {
-    slug: 'payment_successful',
-    name: 'Successful Payment',
-    subject: 'Payment confirmed — {{orderId}}',
-    htmlBody:
-      '<p>Hi {{studentName}},</p><p>Payment of {{amount}} {{currency}} for order {{orderId}} succeeded.</p>',
-    textBody: 'Hi {{studentName}}, Payment of {{amount}} {{currency}} for order {{orderId}} succeeded.',
-    variables: ['studentName', 'orderId', 'amount', 'currency'],
-  },
-  {
-    slug: 'payment_failed',
-    name: 'Failed Payment',
-    subject: 'Payment failed — {{orderId}}',
-    htmlBody: '<p>Hi {{studentName}},</p><p>Payment for order {{orderId}} failed. Please try again.</p>',
-    textBody: 'Hi {{studentName}}, Payment for order {{orderId}} failed. Please try again.',
-    variables: ['studentName', 'orderId'],
-  },
-  {
-    slug: 'assignment_submitted',
-    name: 'Assignment Submitted',
-    subject: 'Assignment submitted: {{assignmentTitle}}',
-    htmlBody: '<p>Hi {{studentName}},</p><p>We received your submission for {{assignmentTitle}}.</p>',
-    textBody: 'Hi {{studentName}}, We received your submission for {{assignmentTitle}}.',
-    variables: ['studentName', 'assignmentTitle'],
-  },
-  {
-    slug: 'assignment_evaluated',
-    name: 'Assignment Evaluated',
-    subject: 'Assignment graded: {{assignmentTitle}}',
-    htmlBody: '<p>Hi {{studentName}},</p><p>Your assignment {{assignmentTitle}} has been evaluated.</p>',
-    textBody: 'Hi {{studentName}}, Your assignment {{assignmentTitle}} has been evaluated.',
-    variables: ['studentName', 'assignmentTitle', 'score'],
-  },
-  {
-    slug: 'quiz_result',
-    name: 'Quiz Result',
-    subject: 'Quiz result: {{quizTitle}}',
-    htmlBody: '<p>Hi {{studentName}},</p><p>Your result for {{quizTitle}}: {{score}}</p>',
-    textBody: 'Hi {{studentName}}, Your result for {{quizTitle}}: {{score}}',
-    variables: ['studentName', 'quizTitle', 'score'],
-  },
-  {
-    slug: 'certificate_generated',
-    name: 'Certificate Generated',
-    subject: 'Certificate ready — {{certificateNumber}}',
-    htmlBody:
-      '<p>Hi {{studentName}},</p><p>Your certificate {{certificateNumber}} for {{courseName}} is ready.</p>',
-    textBody:
-      'Hi {{studentName}}, Your certificate {{certificateNumber}} for {{courseName}} is ready.',
-    variables: ['studentName', 'certificateNumber', 'courseName'],
-  },
-  {
-    slug: 'course_announcement',
-    name: 'Course Announcement',
-    subject: '{{title}}',
-    htmlBody: '<p>Hi {{studentName}},</p><p>{{message}}</p>',
-    textBody: 'Hi {{studentName}}, {{message}}',
-    variables: ['studentName', 'title', 'message', 'courseName'],
-  },
-  {
-    slug: 'password_reset',
-    name: 'Password Reset',
-    subject: 'Reset your SkillBee password',
-    htmlBody:
-      '<p>Hi {{studentName}},</p><p>Use this link to reset your password: <a href="{{resetLink}}">Reset password</a></p><p>If you did not request this, ignore this email.</p>',
-    textBody: 'Hi {{studentName}}, Reset link: {{resetLink}}',
-    variables: ['studentName', 'resetLink', 'email'],
-  },
-  {
-    slug: 'custom_admin',
-    name: 'Custom Admin Email',
-    subject: '{{title}}',
-    htmlBody: '<p>Hi {{studentName}},</p><p>{{message}}</p>',
-    textBody: 'Hi {{studentName}}, {{message}}',
-    variables: ['studentName', 'title', 'message', 'email'],
-  },
-];
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -158,6 +69,27 @@ export async function ensureDefaultTemplates() {
           },
         },
         { upsert: true }
+      );
+      // Upgrade built-in designs: only system templates still on an older
+      // designVersion are refreshed. Custom templates (isSystem=false) and
+      // templates already on the current version are never touched.
+      // eslint-disable-next-line no-await-in-loop
+      await EmailTemplate.updateOne(
+        {
+          slug: t.slug,
+          isSystem: true,
+          $or: [{ designVersion: { $lt: EMAIL_DESIGN_VERSION } }, { designVersion: { $exists: false } }],
+        },
+        {
+          $set: {
+            name: t.name,
+            subject: t.subject,
+            htmlBody: t.htmlBody,
+            textBody: t.textBody,
+            variables: t.variables,
+            designVersion: EMAIL_DESIGN_VERSION,
+          },
+        }
       );
     } catch (err) {
       if (err?.code !== 11000) throw err;

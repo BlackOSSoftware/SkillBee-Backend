@@ -1,5 +1,20 @@
 import { asyncHandler } from '../../../utils/asyncHandler.js';
 import * as attemptService from '../services/quizAttempt.service.js';
+import * as studentQuizService from '../services/studentQuiz.service.js';
+
+export const listStudentQuizzes = asyncHandler(async (req, res) => {
+  const result = await studentQuizService.listStudentQuizzes(req, req.query);
+  res.json({
+    success: true,
+    data: { quizzes: result.quizzes },
+    pagination: result.pagination,
+  });
+});
+
+export const getStudentQuiz = asyncHandler(async (req, res) => {
+  const data = await studentQuizService.getStudentQuiz(req, req.params.id);
+  res.json({ success: true, data });
+});
 
 export const start = asyncHandler(async (req, res) => {
   const data = await attemptService.startQuizAttempt(req, req.params.id);

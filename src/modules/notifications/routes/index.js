@@ -67,5 +67,14 @@ export function mountNotificationRoutes(app, apiPrefix) {
     validateRequest({ query: listQuery }),
     controller.listAdminNotifications
   );
+  admin.get(
+    '/campaigns',
+    validateRequest({ query: listQuery }),
+    controller.listCampaigns
+  );
+  admin.get(
+    '/campaigns/:campaignId',
+    controller.getCampaign
+  );
   app.use(`${apiPrefix}/admin/notifications`, admin);
 }

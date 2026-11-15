@@ -22,3 +22,8 @@ export const completeLessonHandler = asyncHandler(async (req, res) => {
   const result = await completeLesson(req, req.params.id, req.body || {});
   res.json({ success: true, data: result });
 });
+
+export const enrollFree = asyncHandler(async (req, res) => {
+  const enrollment = await enrollmentService.enrollFreeCourse(req, req.body.courseId);
+  res.status(201).json({ success: true, data: { enrollment } });
+});

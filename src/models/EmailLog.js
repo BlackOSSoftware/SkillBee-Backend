@@ -5,6 +5,8 @@ export const EMAIL_LOG_STATUS = Object.freeze({
   PROCESSING: 'processing',
   SENT: 'sent',
   FAILED: 'failed',
+  /** Recorded but intentionally not sent (SMTP disabled/unconfigured). */
+  SIMULATED: 'simulated',
 });
 
 const emailLogSchema = new mongoose.Schema(

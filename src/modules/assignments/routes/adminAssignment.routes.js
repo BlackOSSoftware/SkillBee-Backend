@@ -1,9 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../../middleware/authenticate.js';
-import {
-  requireAnyPermission,
-  requireCourseStaffAccess,
-} from '../../../middleware/authorize.js';
+import { requireAnyPermission } from '../../../middleware/authorize.js';
 import { validate, validateRequest } from '../../../middleware/validate.js';
 import { PERMISSIONS } from '../../../config/security.js';
 import * as assignmentController from '../controllers/assignment.controller.js';
@@ -23,7 +20,8 @@ import {
 } from '../validators/submission.validator.js';
 
 const router = Router();
-router.use(authenticate, requireCourseStaffAccess());
+// authenticate only — per-route requireAnyPermission enforces access.
+router.use(authenticate);
 
 router.get(
   '/',
@@ -77,7 +75,8 @@ router.get(
 export default router;
 
 export const adminSubmissionRouter = Router();
-adminSubmissionRouter.use(authenticate, requireCourseStaffAccess());
+// authenticate only — per-route requireAnyPermission enforces access.
+adminSubmissionRouter.use(authenticate);
 
 adminSubmissionRouter.get(
   '/:id',

@@ -63,7 +63,11 @@ export async function listAssignmentsAdmin(req, query = {}) {
       instructorIds: req.user._id,
       deletedAt: null,
     }).select('_id');
-    filter.courseId = { $in: courses.map((c) => c._id) };
+    const ids = courses.map((c) => c._id);
+    // Keep the caller's courseId filter but never leave the instructor's scope
+    filter.courseId = query.courseId
+      ? { $in: ids.filter((id) => id.toString() === String(query.courseId)) }
+      : { $in: ids };
   }
 
   const page = Number(query.page) || 1;

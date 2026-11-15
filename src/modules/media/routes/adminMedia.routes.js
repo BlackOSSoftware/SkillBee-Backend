@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../../../middleware/authenticate.js';
-import { requireAnyPermission, requireCourseStaffAccess } from '../../../middleware/authorize.js';
+import { requireAnyPermission } from '../../../middleware/authorize.js';
 import { validate, validateRequest } from '../../../middleware/validate.js';
 import { PERMISSIONS } from '../../../config/security.js';
 import { uploadRateLimiter } from '../../../middleware/rateLimiters.js';
@@ -9,6 +9,7 @@ import * as mediaController from '../controllers/media.controller.js';
 import {
   confirmUploadSchema,
   initiateUploadSchema,
+  listCourseVideosQuerySchema,
   listMediaQuerySchema,
   mediaIdParamSchema,
   updateMediaSchema,
@@ -18,7 +19,8 @@ import { handleMediaMulterError, mediaBinaryUpload } from '../middleware/upload.
 
 const router = Router();
 
-router.use(authenticate, requireCourseStaffAccess());
+// authenticate only — per-route permission checks (read/upload/update/del/…) enforce access.
+router.use(authenticate);
 
 const read = requireAnyPermission(PERMISSIONS.MEDIA_READ, PERMISSIONS.COURSES_MEDIA_UPLOAD);
 const upload = requireAnyPermission(PERMISSIONS.MEDIA_UPLOAD, PERMISSIONS.COURSES_MEDIA_UPLOAD);
@@ -29,6 +31,7 @@ const storage = requireAnyPermission(PERMISSIONS.MEDIA_STORAGE_READ, PERMISSIONS
 const refs = requireAnyPermission(PERMISSIONS.MEDIA_REFERENCES_READ, PERMISSIONS.MEDIA_READ);
 
 router.get('/', read, validate(listMediaQuerySchema, 'query'), mediaController.listMedia);
+router.get('/course-videos', read, validate(listCourseVideosQuerySchema, 'query'), mediaController.listCourseVideos);
 router.get('/categories', read, mediaController.getCategories);
 router.get('/storage', storage, mediaController.getStorage);
 

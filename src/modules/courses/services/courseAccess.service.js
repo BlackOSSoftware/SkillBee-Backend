@@ -42,15 +42,16 @@ export async function assertCanManageCourse(req, course, { forPublish = false } 
     throw new AppError('Insufficient role', 403, 'FORBIDDEN');
   }
 
+  // instructorIds may be populated User docs or raw ObjectIds depending on the query
   const assigned = (course.instructorIds || []).some(
-    (id) => id.toString() === req.user._id.toString()
+    (id) => String(id._id ?? id) === req.user._id.toString()
   );
   if (!assigned) {
     throw new AppError('You are not assigned to this course', 403, 'FORBIDDEN');
   }
 
-  if (forPublish) {
-    throw new AppError('Instructors cannot publish courses', 403, 'FORBIDDEN');
+  if (forPublish && !hasPermission(req, PERMISSIONS.COURSES_PUBLISH)) {
+    throw new AppError('Publish permission required', 403, 'FORBIDDEN');
   }
 
   return course;
@@ -60,7 +61,7 @@ export function assertCanReadCourse(req, course) {
   if (isPlatformAdmin(req.role)) return true;
   if (req.role?.slug === ROLE_SLUGS.INSTRUCTOR) {
     const assigned = (course.instructorIds || []).some(
-      (id) => id.toString() === req.user._id.toString()
+      (id) => String(id._id ?? id) === req.user._id.toString()
     );
     if (!assigned) {
       throw new AppError('You are not assigned to this course', 403, 'FORBIDDEN');

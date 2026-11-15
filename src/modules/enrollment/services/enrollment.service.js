@@ -194,6 +194,137 @@ export async function createManualEnrollment(req, input) {
   return created.toSafeObject();
 }
 
+/**
+ * Student self-enrollment for FREE courses only.
+ * No payment involved — creates an active enrollment directly.
+ * PRE_RECORDED courses must go through checkout; LIVE_SESSION through applications.
+ */
+export async function enrollFreeCourse(req, courseId) {
+  const student = await assertStudentUser(req.user._id);
+  const course = await assertCourseEnrollable(courseId);
+
+  const effectiveType =
+    course.effectiveCourseType?.() ||
+    course.courseType ||
+    (course.pricing?.type === 'free' ? 'FREE' : 'PRE_RECORDED');
+
+  if (effectiveType === 'LIVE_SESSION') {
+    throw new AppError(
+      'Live session courses require an application — use the application form',
+      400,
+      'LIVE_COURSE_APPLICATION_REQUIRED'
+    );
+  }
+  if (effectiveType !== 'FREE') {
+    throw new AppError(
+      'This course requires payment — please use checkout',
+      400,
+      'PAYMENT_REQUIRED'
+    );
+  }
+
+  const existing = await CourseEnrollment.findOne({
+    courseId: course._id,
+    studentId: student._id,
+    deletedAt: null,
+  });
+
+  if (existing) {
+    if (['active', 'pending', 'completed'].includes(existing.status)) {
+      if (!isEnrollmentTimeExpired(existing)) {
+        throw new AppError('Already enrolled in this course', 409, 'ALREADY_ENROLLED');
+      }
+    }
+    if (['revoked', 'suspended', 'cancelled'].includes(existing.status)) {
+      throw new AppError(
+        'Enrollment was revoked — please contact support',
+        403,
+        'ENROLLMENT_REVOKED'
+      );
+    }
+    // Expired enrollment → reactivate (unique index allows only one doc)
+    const from = existing.status;
+    existing.status = 'active';
+    existing.enrollmentType = 'free';
+    existing.source = 'free';
+    existing.enrolledAt = new Date();
+    existing.enrolledBy = req.user._id;
+    existing.expiresAt = computeExpiry(course, null);
+    existing.revokedAt = null;
+    existing.revokedBy = null;
+    existing.revocationReason = null;
+    existing.completedAt = null;
+    existing.courseCompletionStatus = 'not_started';
+    existing.pushHistory({
+      action: 'reactivated',
+      fromStatus: from,
+      toStatus: 'active',
+      actorId: req.user._id,
+      reason: 'Self re-enrollment (free course)',
+    });
+    await existing.save();
+    await recalculateEnrollmentProgress(existing._id, { actorId: req.user._id });
+    await bumpCourseEnrollmentCount(course._id);
+    await invalidateEnrollmentCaches({
+      studentId: student._id.toString(),
+      courseId: course._id.toString(),
+      enrollmentId: existing._id.toString(),
+    });
+    const refreshed = await CourseEnrollment.findById(existing._id);
+    emitEnrollmentEvent(student, course, refreshed._id);
+    return refreshed.toSafeObject();
+  }
+
+  const enrollment = new CourseEnrollment({
+    courseId: course._id,
+    studentId: student._id,
+    status: 'active',
+    enrollmentType: 'free',
+    source: 'free',
+    enrolledBy: req.user._id,
+    enrolledAt: new Date(),
+    expiresAt: computeExpiry(course, null),
+  });
+  enrollment.pushHistory({
+    action: 'created',
+    toStatus: 'active',
+    actorId: req.user._id,
+    reason: 'Self-enrollment (free course)',
+  });
+  await enrollment.save();
+  await recalculateEnrollmentProgress(enrollment._id, { actorId: req.user._id });
+  await bumpCourseEnrollmentCount(course._id);
+  await invalidateEnrollmentCaches({
+    studentId: student._id.toString(),
+    courseId: course._id.toString(),
+    enrollmentId: enrollment._id.toString(),
+  });
+  const created = await CourseEnrollment.findById(enrollment._id);
+  emitEnrollmentEvent(student, course, enrollment._id);
+  return created.toSafeObject();
+}
+
+function emitEnrollmentEvent(student, course, enrollmentId) {
+  setImmediate(async () => {
+    try {
+      const { emitAppEventAsync } = await import(
+        '../../../services/events/eventBus.service.js'
+      );
+      emitAppEventAsync('enrollment.activated', {
+        userId: student._id,
+        email: student.email,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        courseId: course._id,
+        courseName: course.title,
+        enrollmentId,
+      });
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
 async function bumpCourseEnrollmentCount(courseId) {
   const count = await CourseEnrollment.countDocuments({
     courseId,

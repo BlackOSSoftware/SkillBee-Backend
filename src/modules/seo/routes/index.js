@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { authenticate } from '../../../middleware/authenticate.js';
-import { requireAdminAccess } from '../../../middleware/authorize.js';
+import { requirePermissions } from '../../../middleware/authorize.js';
+import { PERMISSIONS } from '../../../config/security.js';
 import { validateRequest } from '../../../middleware/validate.js';
 import * as seoController from '../controllers/seo.controller.js';
 import {
   courseIdParam,
   courseSeoPatchBody,
+  courseListQuery,
   idParam,
   pageSeoPatchBody,
   redirectCreateBody,
@@ -42,7 +44,8 @@ export function mountSeoRoutes(app, apiPrefix) {
   app.use(`${apiPrefix}/seo`, publicSeo);
 
   const adminSeo = Router();
-  adminSeo.use(authenticate, requireAdminAccess());
+  // Super admin bypasses inside requirePermissions; admin needs seo.manage.
+  adminSeo.use(authenticate, requirePermissions(PERMISSIONS.SEO_MANAGE));
 
   adminSeo.get('/settings', seoController.getSettings);
   adminSeo.patch(
@@ -60,6 +63,12 @@ export function mountSeoRoutes(app, apiPrefix) {
     '/pages/:id',
     validateRequest({ params: idParam, body: pageSeoPatchBody }),
     seoController.patchPageSeo
+  );
+
+  adminSeo.get(
+    '/courses',
+    validateRequest({ query: courseListQuery }),
+    seoController.listCourses
   );
 
   adminSeo.get(

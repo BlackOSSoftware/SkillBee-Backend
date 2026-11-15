@@ -44,6 +44,15 @@ export async function patchPageSeo(req, res, next) {
   }
 }
 
+export async function listCourses(req, res, next) {
+  try {
+    const result = await courseSeoService.listCoursesForSeo(req.query);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function getCourseSeo(req, res, next) {
   try {
     const data = await courseSeoService.getCourseSeo(req.params.id);

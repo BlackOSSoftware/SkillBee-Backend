@@ -3,7 +3,6 @@ import { authenticate } from '../../../middleware/authenticate.js';
 import {
   requireAdminAccess,
   requireAnyPermission,
-  requireCourseStaffAccess,
 } from '../../../middleware/authorize.js';
 import { validate, validateRequest } from '../../../middleware/validate.js';
 import { PERMISSIONS } from '../../../config/security.js';
@@ -31,7 +30,9 @@ import { z } from 'zod';
 
 const router = Router();
 
-router.use(authenticate, requireCourseStaffAccess());
+// authenticate only — every route below enforces requireAnyPermission, so
+// custom roles with course permissions work without a role-slug check.
+router.use(authenticate);
 
 router.get(
   '/',

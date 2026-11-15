@@ -14,6 +14,15 @@ export const listMedia = asyncHandler(async (req, res) => {
   });
 });
 
+export const listCourseVideos = asyncHandler(async (req, res) => {
+  const result = await mediaService.listCourseVideos(req, req.query);
+  res.json({
+    success: true,
+    data: { videos: result.videos },
+    pagination: result.pagination,
+  });
+});
+
 export const getCategories = asyncHandler(async (_req, res) => {
   res.json({
     success: true,

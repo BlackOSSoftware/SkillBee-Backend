@@ -1,9 +1,6 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { authenticate } from '../../../middleware/authenticate.js';
-import {
-  requireAnyPermission,
-  requireCourseStaffAccess,
-} from '../../../middleware/authorize.js';
+import { requireAnyPermission } from '../../../middleware/authorize.js';
 import { validate, validateRequest } from '../../../middleware/validate.js';
 import { PERMISSIONS } from '../../../config/security.js';
 import * as bankController from '../controllers/questionBank.controller.js';
@@ -18,7 +15,6 @@ const router = Router();
 
 router.use(
   authenticate,
-  requireCourseStaffAccess(),
   requireAnyPermission(PERMISSIONS.QUIZZES_QUESTION_BANK_MANAGE)
 );
 

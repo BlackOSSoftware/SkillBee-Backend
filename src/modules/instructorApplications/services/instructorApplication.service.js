@@ -5,6 +5,7 @@ import {
   InstructorApplication,
 } from '../../../models/InstructorApplication.js';
 import { emitAppEventAsync } from '../../../services/events/eventBus.service.js';
+import { sendNotificationEmail } from '../../../services/notifications/email.service.js';
 import { AppError } from '../../../utils/AppError.js';
 import { buildPagination, getSkip } from '../../../utils/pagination.js';
 import { deleteResumeFile, storeResumeFile } from './resumeStorage.service.js';
@@ -100,6 +101,46 @@ export async function getApplication(id) {
   return doc;
 }
 
+const STATUS_LABELS = {
+  [INSTRUCTOR_APP_STATUS.PENDING]: 'Pending',
+  [INSTRUCTOR_APP_STATUS.REVIEWING]: 'Under Review',
+  [INSTRUCTOR_APP_STATUS.SHORTLISTED]: 'Shortlisted',
+  [INSTRUCTOR_APP_STATUS.APPROVED]: 'Approved',
+  [INSTRUCTOR_APP_STATUS.REJECTED]: 'Rejected',
+};
+
+function statusLabel(status) {
+  return STATUS_LABELS[status] || status;
+}
+
+/** Fire-and-forget applicant notification; never blocks or fails the status update. */
+async function notifyStatusChange(doc, from, to) {
+  try {
+    await sendNotificationEmail({
+      to: doc.email,
+      subject: `Instructor application ${statusLabel(to)}`,
+      template: 'instructor_application_status',
+      idempotencyKey: `instructor-app-status:${doc._id.toString()}:${to}:${doc.reviewedAt?.getTime?.() ?? Date.now()}`,
+      meta: {
+        studentName: doc.fullName,
+        applicationNumber: doc._id.toString().slice(-8).toUpperCase(),
+        courseName: doc.expertSubject,
+        previousStatus: statusLabel(from),
+        newStatus: statusLabel(to),
+        message:
+          to === INSTRUCTOR_APP_STATUS.APPROVED
+            ? 'Congratulations! Our team will contact you shortly with next steps.'
+            : to === INSTRUCTOR_APP_STATUS.REJECTED
+              ? 'Thank you for your interest. We encourage you to reapply in the future.'
+              : 'Our review team is processing your application.',
+        title: 'Instructor Application Update',
+      },
+    });
+  } catch (err) {
+    console.warn(`[instructor-applications] status email failed for ${doc._id}: ${err.message}`);
+  }
+}
+
 export async function updateStatus(req, id, { status, adminNotes }) {
   const doc = await getApplication(id);
   const from = doc.status;
@@ -115,6 +156,9 @@ export async function updateStatus(req, id, { status, adminNotes }) {
     meta: { from, to: status },
   });
   await doc.save();
+  if (from !== status) {
+    await notifyStatusChange(doc, from, status);
+  }
   return doc.toAdminObject();
 }
 

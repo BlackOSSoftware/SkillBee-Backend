@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { authenticate } from '../../../middleware/authenticate.js';
+import { authenticate, optionalAuthenticate } from '../../../middleware/authenticate.js';
 import { validateRequest } from '../../../middleware/validate.js';
 import * as lessonController from '../controllers/lesson.controller.js';
 import * as learningService from '../services/learning.service.js';
@@ -10,6 +10,22 @@ import { resourceIdParamSchema } from '../validators/resource.validator.js';
 import * as resourceController from '../controllers/resource.controller.js';
 
 const router = Router();
+
+/**
+ * Video stream is authorized by the short-lived signed playback token alone.
+ * `<video>` elements cannot send custom headers and may not carry the session
+ * cookie (expired/missing), so this route must not require `authenticate`.
+ * `optionalAuthenticate` still populates req.user when a session exists so the
+ * token's `sub` can be cross-checked against the logged-in user.
+ */
+router.get(
+  '/lessons/:lessonId/video/stream',
+  optionalAuthenticate,
+  validateRequest({ params: z.object({ lessonId: objectId }) }),
+  asyncHandler(async (req, res) => {
+    await learningService.streamLearningVideo(req, res, req.params.lessonId);
+  })
+);
 
 router.use(authenticate);
 
@@ -37,14 +53,6 @@ router.get(
   asyncHandler(async (req, res) => {
     const data = await learningService.getLearningPlayback(req, req.params.lessonId);
     res.json({ success: true, data });
-  })
-);
-
-router.get(
-  '/lessons/:lessonId/video/stream',
-  validateRequest({ params: z.object({ lessonId: objectId }) }),
-  asyncHandler(async (req, res) => {
-    await learningService.streamLearningVideo(req, res, req.params.lessonId);
   })
 );
 

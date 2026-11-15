@@ -69,5 +69,20 @@ export const listMediaQuerySchema = z.object({
     .transform((v) => v === true || v === 'true'),
 });
 
+export const listCourseVideosQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  search: z.string().trim().optional(),
+  courseId: objectId.optional(),
+  status: z.enum(['draft', 'published', 'archived']).optional(),
+  processingStatus: z
+    .enum(['pending', 'uploading', 'processing', 'ready', 'failed'])
+    .optional(),
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+  sortBy: z.enum(['createdAt', 'sizeBytes', 'title']).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
+});
+
 export const mediaIdParamSchema = z.object({ id: objectId });
 export const uploadIdParamSchema = z.object({ uploadId: z.string().min(8).max(64) });

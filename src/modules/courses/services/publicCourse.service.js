@@ -1,6 +1,8 @@
-import { COURSE_STATUS, REVIEW_STATUS } from '../../../config/security.js';
+import { COURSE_STATUS, REVIEW_STATUS, ROLE_SLUGS } from '../../../config/security.js';
 import { Course } from '../../../models/Course.js';
 import { CourseEnrollment } from '../../../models/CourseEnrollment.js';
+import { CourseLead } from '../../../models/CourseLead.js';
+import { User } from '../../../models/User.js';
 import { CourseLesson } from '../../../models/CourseLesson.js';
 import { CourseReview } from '../../../models/CourseReview.js';
 import { CourseTopic } from '../../../models/CourseTopic.js';
@@ -16,6 +18,28 @@ import { AppError } from '../../../utils/AppError.js';
 import { buildPagination, getSkip } from '../../../utils/pagination.js';
 import { listPublicCategories } from './category.service.js';
 import { getApprovedRatingSummary } from './review.service.js';
+import { courseTypeFilter } from './course.service.js';
+
+/** Plain-object course type resolution (works on lean docs). */
+export function resolveCourseType(course) {
+  if (course?.courseType) return course.courseType;
+  return course?.pricing?.type === 'free' ? 'FREE' : 'PRE_RECORDED';
+}
+
+/** Backend-driven CTA mapping per course type. */
+export function courseActionLabel(course) {
+  const type = resolveCourseType(course);
+  if (type === 'LIVE_SESSION') return 'Apply Now';
+  if (type === 'PRE_RECORDED') return 'Buy Now';
+  return 'Enroll Now';
+}
+
+export function enrollmentEligibility(course) {
+  const type = resolveCourseType(course);
+  if (type === 'LIVE_SESSION') return 'application';
+  if (type === 'PRE_RECORDED') return 'payment_required';
+  return 'self_enroll';
+}
 
 function publicInstructor(user) {
   if (!user) return null;
@@ -36,6 +60,9 @@ function publicCourseCard(course, rating = null) {
     thumbnail: course.thumbnail,
     level: course.level,
     language: course.language,
+    courseType: resolveCourseType(course),
+    actionLabel: courseActionLabel(course),
+    enrollmentEligibility: enrollmentEligibility(course),
     durationValue: course.durationValue,
     durationUnit: course.durationUnit,
     isFeatured: course.isFeatured,
@@ -69,6 +96,14 @@ export async function listPublicCourses(query) {
     if (query.search) {
       const rx = new RegExp(String(query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       filter.$or = [{ title: rx }, { shortDescription: rx }, { tags: rx }, { slug: rx }];
+    }
+    if (query.courseType) {
+      // courseTypeFilter may itself contain $or — merge via $and to avoid
+      // clobbering the search $or above.
+      const typeCond = courseTypeFilter(String(query.courseType).toUpperCase());
+      if (Object.keys(typeCond).length) {
+        filter.$and = [...(filter.$and || []), typeCond];
+      }
     }
 
     const page = query.page || 1;
@@ -186,6 +221,16 @@ export async function getPublicCourseBySlug(slug, viewerUserId = null) {
           minimumCompletionPercentage: course.certificate?.minimumCompletionPercentage,
         },
         seo: course.seo,
+        liveSession:
+          resolveCourseType(course) === 'LIVE_SESSION' && course.liveSession
+            ? {
+                batchName: course.liveSession.batchName,
+                startDate: course.liveSession.startDate,
+                endDate: course.liveSession.endDate,
+                sessionMode: course.liveSession.sessionMode,
+                sessionSchedule: course.liveSession.sessionSchedule,
+              }
+            : null,
         reviews: reviews.map((r) => ({
           id: r._id.toString(),
           rating: r.rating,
@@ -283,3 +328,80 @@ export async function getPublicCurriculum(slug, viewerUserId = null) {
 }
 
 export { listPublicCategories };
+
+/**
+ * Public free-course registration.
+ * Saves the visitor's contact details as a CourseLead (deduped per
+ * email + course), reports whether a student account already exists for
+ * the email, and — when the caller is an authenticated student — creates
+ * the free enrollment immediately via the existing self-enroll service.
+ */
+export async function registerFreeCourseLead(req, slug, input) {
+  const course = await Course.findOne({
+    slug,
+    deletedAt: null,
+    status: COURSE_STATUS.PUBLISHED,
+  });
+  if (!course) throw new AppError('Course not found', 404, 'COURSE_NOT_FOUND');
+  if (resolveCourseType(course) !== 'FREE') {
+    throw new AppError('This course is not a free course', 400, 'NOT_A_FREE_COURSE');
+  }
+
+  const email = String(input.email).trim().toLowerCase();
+  const studentId = req.user?._id || null;
+
+  let lead = await CourseLead.findOne({ email, course: course._id, deletedAt: null });
+  if (lead) {
+    lead.name = input.name.trim();
+    lead.whatsappNumber = input.whatsappNumber.trim();
+    lead.currentCompany = input.currentCompany.trim();
+    lead.currentCity = input.currentCity.trim();
+    if (studentId && !lead.student) lead.student = studentId;
+    await lead.save();
+  } else {
+    lead = await CourseLead.create({
+      name: input.name.trim(),
+      email,
+      whatsappNumber: input.whatsappNumber.trim(),
+      currentCompany: input.currentCompany.trim(),
+      currentCity: input.currentCity.trim(),
+      course: course._id,
+      student: studentId,
+      source: 'free_course_registration',
+      status: 'new',
+    });
+  }
+
+  const existingUser = await User.findOne({ email, deletedAt: null })
+    .select('_id')
+    .lean();
+  const accountExists = Boolean(existingUser);
+
+  let enrollment = null;
+  let alreadyEnrolled = false;
+  if (req.user && req.role?.slug === ROLE_SLUGS.STUDENT) {
+    const { enrollFreeCourse } = await import(
+      '../../enrollment/services/enrollment.service.js'
+    );
+    try {
+      enrollment = await enrollFreeCourse(req, course._id.toString());
+    } catch (error) {
+      if (error?.code === 'ALREADY_ENROLLED') {
+        alreadyEnrolled = true;
+      } else {
+        throw error;
+      }
+    }
+    if ((enrollment || alreadyEnrolled) && lead.status === 'new') {
+      lead.status = 'converted';
+      await lead.save();
+    }
+  }
+
+  return {
+    lead: lead.toSafeObject(),
+    accountExists,
+    enrollment,
+    alreadyEnrolled,
+  };
+}

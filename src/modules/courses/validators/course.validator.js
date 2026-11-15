@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { COURSE_TYPES } from '../../../config/security.js';
 import {
   cloudinaryMediaInput,
   COURSE_LEVELS,
@@ -25,7 +26,17 @@ const faq = z
   })
   .strict();
 
-export const createCourseSchema = z
+const liveSessionInput = z
+  .object({
+    batchName: z.string().trim().max(200).optional(),
+    startDate: z.coerce.date().nullable().optional(),
+    endDate: z.coerce.date().nullable().optional(),
+    sessionMode: z.string().trim().max(100).optional(),
+    sessionSchedule: z.string().trim().max(2000).optional(),
+  })
+  .strict();
+
+const coursePayloadSchema = z
   .object({
     title: z.string().trim().min(3).max(200),
     slug: z
@@ -42,6 +53,7 @@ export const createCourseSchema = z
     instructorIds: z.array(objectId).max(20).optional(),
     level: z.enum(COURSE_LEVELS).optional(),
     language: z.string().trim().toLowerCase().min(2).max(10).optional(),
+    courseType: z.enum(COURSE_TYPES).optional(),
     durationValue: z.number().nonnegative().optional(),
     durationUnit: z.enum(DURATION_UNITS).optional(),
     isFeatured: z.boolean().optional(),
@@ -77,10 +89,42 @@ export const createCourseSchema = z
       .optional(),
     seo: seoInput.optional(),
     pricing: pricingInput.optional(),
+    liveSession: liveSessionInput.optional(),
   })
   .strict();
 
-export const updateCourseSchema = createCourseSchema.partial().refine(
+export const createCourseSchema = coursePayloadSchema.superRefine((data, ctx) => {
+  // Conditional pricing rules per course type (create-time).
+  if (data.courseType === 'FREE') {
+    if (data.pricing && data.pricing.type !== 'free') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'FREE courses must use free pricing (no payment required)',
+        path: ['pricing', 'type'],
+      });
+    }
+  }
+  if (data.courseType === 'PRE_RECORDED') {
+    if (!data.pricing || data.pricing.type !== 'paid' || !(data.pricing.regularPrice > 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'PRE_RECORDED courses require paid pricing with regularPrice > 0',
+        path: ['pricing', 'regularPrice'],
+      });
+    }
+  }
+  // LIVE_SESSION: pricing optional — enrollment is application-based;
+  // price may be configured for the post-approval payment step.
+  if (data.liveSession && data.courseType !== 'LIVE_SESSION') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'liveSession details are only allowed for LIVE_SESSION courses',
+      path: ['liveSession'],
+    });
+  }
+});
+
+export const updateCourseSchema = coursePayloadSchema.partial().refine(
   (data) => Object.keys(data).length > 0,
   { message: 'At least one field is required' }
 );
@@ -101,6 +145,7 @@ export const listCoursesQuerySchema = z.object({
   level: z.enum(COURSE_LEVELS).optional(),
   language: z.string().trim().toLowerCase().optional(),
   pricingType: z.enum(['free', 'paid']).optional(),
+  courseType: z.enum(COURSE_TYPES).optional(),
   isFeatured: z
     .union([z.literal('true'), z.literal('false'), z.boolean()])
     .optional()
@@ -127,3 +172,28 @@ export const assignInstructorsSchema = z
 
 export const courseIdParamSchema = z.object({ id: objectId });
 export const courseIdOnlyParamSchema = z.object({ courseId: objectId });
+
+export const courseSlugParamSchema = z.object({
+  slug: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(1)
+    .max(220),
+});
+
+const phoneRegex = /^\+?[0-9][0-9\s\-()]{6,19}$/;
+
+/**
+ * Public free-course registration: visitor contact details captured as a
+ * lead before account creation / enrollment.
+ */
+export const freeRegistrationBody = z
+  .object({
+    name: z.string().trim().min(2).max(120),
+    email: z.string().trim().email().max(254),
+    whatsappNumber: z.string().trim().regex(phoneRegex, 'Invalid WhatsApp number'),
+    currentCompany: z.string().trim().min(1).max(200),
+    currentCity: z.string().trim().min(1).max(120),
+  })
+  .strict();

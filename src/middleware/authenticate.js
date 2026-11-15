@@ -31,3 +31,31 @@ export const authenticate = asyncHandler(async (req, _res, next) => {
   req.tokenPayload = decoded;
   next();
 });
+
+/**
+ * Best-effort auth for middleware that runs before route-level `authenticate`
+ * (e.g. the global rate limiter). Populates req.user/req.role on success and
+ * always calls next() — never rejects. Only a fully verified, active user with
+ * an active role sets req.role, so downstream checks never trust client input.
+ */
+export const optionalAuthenticate = async (req, _res, next) => {
+  try {
+    const header = req.headers.authorization;
+    const bearerToken = header?.startsWith('Bearer ') ? header.slice(7) : null;
+    const token = bearerToken || req.cookies?.accessToken;
+    if (!token) return next();
+
+    const decoded = verifyAccessToken(token);
+    const user = await User.findOne(User.notDeletedFilter({ _id: decoded.sub })).populate('roleId');
+    if (!user || !user.isActiveAccount()) return next();
+    if (!user.roleId || !user.roleId.isActive) return next();
+
+    req.user = user;
+    req.role = user.roleId;
+    req.permissions = user.roleId.permissions || [];
+    req.tokenPayload = decoded;
+  } catch {
+    // Invalid/expired token — treat as unauthenticated; route auth will 401 later.
+  }
+  next();
+};

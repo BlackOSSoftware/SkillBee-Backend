@@ -1,5 +1,6 @@
 import { CertificateTemplate } from '../../../models/CertificateTemplate.js';
 import { Certificate } from '../../../models/Certificate.js';
+import { MediaAsset } from '../../../models/MediaAsset.js';
 import { AppError } from '../../../utils/AppError.js';
 import { getOrSetCache } from '../../../services/cache/cache.service.js';
 import { CACHE_TTL, certificateTemplatesKey } from '../../../services/cache/keys.js';
@@ -12,6 +13,37 @@ function slugifyCode(input) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 80);
+}
+
+const MEDIA_FIELDS = ['backgroundImage', 'organizationLogo', 'signatureImage'];
+
+/**
+ * Template images reference uploaded image assets. The stored URL is taken from the asset, never
+ * from the client; an empty reference clears the image.
+ */
+async function normalizeMediaRefs(input) {
+  const out = { ...input };
+  for (const key of MEDIA_FIELDS) {
+    const ref = input[key];
+    if (ref === undefined) continue;
+    if (!ref || (!ref.mediaAssetId && !ref.storageKey && !ref.url)) {
+      out[key] = {};
+      continue;
+    }
+    if (ref.mediaAssetId) {
+      const asset = await MediaAsset.findOne({ _id: ref.mediaAssetId, deletedAt: null, mediaType: 'image' })
+        .select('secureUrl originalFileName')
+        .lean();
+      if (!asset) throw new AppError(`Image for ${key} was not found`, 400, 'TEMPLATE_IMAGE_NOT_FOUND');
+      out[key] = {
+        mediaAssetId: asset._id,
+        url: asset.secureUrl || null,
+        originalFileName: ref.originalFileName || asset.originalFileName || null,
+        storageKey: null,
+      };
+    }
+  }
+  return out;
 }
 
 export async function listTemplates(query = {}) {
@@ -44,7 +76,8 @@ export async function getTemplate(id) {
   return template.toSafeObject();
 }
 
-export async function createTemplate(req, input) {
+export async function createTemplate(req, rawInput) {
+  const input = await normalizeMediaRefs(rawInput);
   const code = slugifyCode(input.templateCode || input.name);
   const exists = await CertificateTemplate.exists({ templateCode: code, deletedAt: null });
   if (exists) throw new AppError('Template code already exists', 409, 'TEMPLATE_CODE_EXISTS');
@@ -68,9 +101,10 @@ export async function createTemplate(req, input) {
   return template.toSafeObject();
 }
 
-export async function updateTemplate(req, id, input) {
+export async function updateTemplate(req, id, rawInput) {
   const template = await CertificateTemplate.findOne({ _id: id, deletedAt: null });
   if (!template) throw new AppError('Template not found', 404, 'TEMPLATE_NOT_FOUND');
+  const input = await normalizeMediaRefs(rawInput);
 
   const assignable = [
     'name',

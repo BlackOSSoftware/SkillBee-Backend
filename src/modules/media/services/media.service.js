@@ -3,6 +3,8 @@ import { createReadStream, existsSync, statSync } from 'fs';
 import jwt from 'jsonwebtoken';
 import { env } from '../../../config/env.js';
 import { COURSE_STATUS, ROLE_SLUGS, USER_STATUS } from '../../../config/security.js';
+import { Certificate } from '../../../models/Certificate.js';
+import { CertificateTemplate } from '../../../models/CertificateTemplate.js';
 import { Course } from '../../../models/Course.js';
 import { CourseEnrollment } from '../../../models/CourseEnrollment.js';
 import { CourseLesson } from '../../../models/CourseLesson.js';
@@ -59,6 +61,110 @@ async function assertCanAccessAsset(req, asset) {
   throw new AppError('Forbidden', 403, 'FORBIDDEN');
 }
 
+/** Shared mapper: CourseLesson with populated course/topic → Media Library item. */
+function toLessonVideoItem(lesson) {
+  const video = lesson.content?.video || {};
+  const course = lesson.courseId && typeof lesson.courseId === 'object' ? lesson.courseId : null;
+  const topic = lesson.topicId && typeof lesson.topicId === 'object' ? lesson.topicId : null;
+  return {
+    id: `lesson:${lesson._id.toString()}`,
+    source: 'lesson_video',
+    mediaType: 'video',
+    title: lesson.title,
+    originalFileName: video.originalFileName || lesson.title,
+    mimeType: video.mimeType || 'video/mp4',
+    extension: 'mp4',
+    sizeBytes: video.sizeBytes || 0,
+    durationSeconds: video.durationSeconds || 0,
+    width: null,
+    height: null,
+    storageProvider: 'local',
+    processingStatus: video.processingStatus || 'ready',
+    category: 'lesson_video',
+    visibility: 'private',
+    secureUrl: null,
+    thumbnailUrl: null,
+    altText: null,
+    description: null,
+    deletedAt: null,
+    createdAt: video.uploadedAt || lesson.createdAt,
+    updatedAt: lesson.updatedAt,
+    courseId: lesson.courseId?._id?.toString?.() || lesson.courseId?.toString?.() || null,
+    courseName: course?.title || null,
+    courseSlug: course?.slug || null,
+    topicId: lesson.topicId?._id?.toString?.() || lesson.topicId?.toString?.() || null,
+    topicName: topic?.title || null,
+    lessonId: lesson._id.toString(),
+    lessonTitle: lesson.title,
+    lessonStatus: lesson.status,
+    isPreview: Boolean(lesson.isPreview),
+    hasHls: Boolean(video.hlsMasterPath),
+    playback: { lessonId: lesson._id.toString() },
+  };
+}
+
+function lessonVideoSortField(sortBy) {
+  if (sortBy === 'sizeBytes') return 'content.video.sizeBytes';
+  if (sortBy === 'originalFileName') return 'content.video.originalFileName';
+  if (sortBy === 'title') return 'title';
+  return 'createdAt';
+}
+
+function sortKeyOf(item, sortBy) {
+  if (sortBy === 'sizeBytes') return item.sizeBytes || 0;
+  if (sortBy === 'title') return (item.title || '').toLowerCase();
+  if (sortBy === 'originalFileName') return (item.originalFileName || '').toLowerCase();
+  return new Date(item.createdAt).getTime();
+}
+
+/**
+ * Lesson videos are stored on CourseLesson.content.video (local storage), NOT as
+ * MediaAsset records. `listMedia` merges them into All Media so every discoverable
+ * video appears in one place; `listCourseVideos` exposes them as a dedicated tab.
+ * Items use stable synthetic ids (`lesson:<lessonId>`) — no MediaAsset is created.
+ */
+function buildLessonVideoFilter(query, req) {
+  const filter = {
+    deletedAt: null,
+    'content.video.storageKey': { $exists: true, $ne: null },
+  };
+  if (query.courseId) filter.courseId = query.courseId;
+  if (query.lessonId) filter._id = query.lessonId;
+  if (query.status) filter.status = query.status;
+  if (query.processingStatus) filter['content.video.processingStatus'] = query.processingStatus;
+  if (query.search) {
+    const rx = new RegExp(escapeRegex(query.search), 'i');
+    filter.$or = [{ title: rx }, { 'content.video.originalFileName': rx }];
+  }
+  if (query.startDate || query.endDate) {
+    filter.createdAt = {};
+    if (query.startDate) filter.createdAt.$gte = new Date(query.startDate);
+    if (query.endDate) filter.createdAt.$lte = new Date(query.endDate);
+  }
+  if (req.role?.slug === ROLE_SLUGS.INSTRUCTOR) {
+    return filter; // courseId scoping applied by caller (needs async course lookup)
+  }
+  return filter;
+}
+
+async function scopeLessonFilterToInstructor(filter, req) {
+  const courses = await Course.find({
+    instructorIds: req.user._id,
+    deletedAt: null,
+  }).select('_id');
+  filter.courseId = { $in: courses.map((c) => c._id) };
+  return filter;
+}
+
+/** Lesson videos belong in All Media only when the filters can apply to them. */
+function shouldIncludeLessonVideos(query) {
+  if (query.mediaType && query.mediaType !== 'video') return false;
+  if (query.category && query.category !== 'lesson_video') return false;
+  if (query.storageProvider && query.storageProvider !== 'local') return false;
+  if (query.ownerId) return false; // lesson videos have no owner
+  return true;
+}
+
 export async function listMedia(req, query = {}) {
   const filter = {};
   if (query.includeDeleted !== true && query.includeDeleted !== 'true') {
@@ -105,18 +211,104 @@ export async function listMedia(req, query = {}) {
   const sortBy = sortByAllow.has(query.sortBy) ? query.sortBy : 'createdAt';
   const sortOrder = query.sortOrder === 'asc' ? 1 : -1;
 
-  const [rows, total] = await Promise.all([
-    MediaAsset.find(filter)
-      .sort({ [sortBy]: sortOrder })
-      .skip(skip)
-      .limit(limit),
+  const includeLessonVideos = shouldIncludeLessonVideos(query);
+
+  if (!includeLessonVideos) {
+    const [rows, total] = await Promise.all([
+      MediaAsset.find(filter)
+        .sort({ [sortBy]: sortOrder })
+        .skip(skip)
+        .limit(limit),
+      MediaAsset.countDocuments(filter),
+    ]);
+    return {
+      media: rows.map((r) => r.toSafeObject()),
+      pagination: buildPagination({ page, limit, total }),
+    };
+  }
+
+  // Merged path: MediaAsset rows + lesson videos, deduped by physical storageKey.
+  let lessonFilter = buildLessonVideoFilter(query, req);
+  if (req.role?.slug === ROLE_SLUGS.INSTRUCTOR) {
+    lessonFilter = await scopeLessonFilterToInstructor(lessonFilter, req);
+  }
+  // A lesson video whose storageKey is already registered as a MediaAsset is the
+  // same physical file — the MediaAsset record is canonical, so skip the lesson copy.
+  const assetKeys = await MediaAsset.distinct('storageKey', { storageKey: { $ne: null } });
+  if (assetKeys.length) {
+    lessonFilter['content.video.storageKey'] = {
+      $exists: true,
+      $ne: null,
+      $nin: assetKeys,
+    };
+  }
+
+  const fetchCount = skip + limit;
+  const lessonSortField = lessonVideoSortField(sortBy);
+  const [assetRows, assetTotal, lessonRows, lessonTotal] = await Promise.all([
+    MediaAsset.find(filter).sort({ [sortBy]: sortOrder }).limit(fetchCount),
     MediaAsset.countDocuments(filter),
+    CourseLesson.find(lessonFilter)
+      .populate('courseId', 'title slug')
+      .populate('topicId', 'title slug')
+      .sort({ [lessonSortField]: sortOrder })
+      .limit(fetchCount),
+    CourseLesson.countDocuments(lessonFilter),
   ]);
 
+  const merged = [
+    ...assetRows.map((r) => {
+      const item = r.toSafeObject();
+      return { item, key: sortKeyOf(item, sortBy) };
+    }),
+    ...lessonRows.map((l) => {
+      const item = toLessonVideoItem(l);
+      return { item, key: sortKeyOf(item, sortBy) };
+    }),
+  ];
+  merged.sort((a, b) => {
+    if (a.key < b.key) return -sortOrder;
+    if (a.key > b.key) return sortOrder;
+    return 0;
+  });
+
   return {
-    media: rows.map((r) => r.toSafeObject()),
-    pagination: buildPagination({ page, limit, total }),
+    media: merged.slice(skip, skip + limit).map((m) => m.item),
+    pagination: buildPagination({ page, limit, total: assetTotal + lessonTotal }),
   };
+}
+
+/**
+ * Course/lesson videos are stored on CourseLesson.content.video (local storage),
+ * NOT as MediaAsset records. This aggregates them for the Media Library so
+ * existing course videos are discoverable and playable from one place.
+ * Items use stable synthetic ids (`lesson:<lessonId>`) — no MediaAsset is created.
+ */
+export async function listCourseVideos(req, query = {}) {
+  let filter = buildLessonVideoFilter(query, req);
+  if (req.role?.slug === ROLE_SLUGS.INSTRUCTOR) {
+    filter = await scopeLessonFilterToInstructor(filter, req);
+  }
+
+  const page = Number(query.page) || 1;
+  const limit = Math.min(Number(query.limit) || 20, 100);
+  const skip = getSkip({ page, limit });
+  const sortByAllow = new Set(['createdAt', 'sizeBytes', 'title']);
+  const sortBy = sortByAllow.has(query.sortBy) ? query.sortBy : 'createdAt';
+  const sortOrder = query.sortOrder === 'asc' ? 1 : -1;
+  const sortField = lessonVideoSortField(sortBy);
+
+  const [rows, total] = await Promise.all([
+    CourseLesson.find(filter)
+      .populate('courseId', 'title slug')
+      .populate('topicId', 'title slug')
+      .sort({ [sortField]: sortOrder })
+      .skip(skip)
+      .limit(limit),
+    CourseLesson.countDocuments(filter),
+  ]);
+
+  return { videos: rows.map(toLessonVideoItem), pagination: buildPagination({ page, limit, total }) };
 }
 
 export async function getMediaById(req, id, { includeDeleted = false } = {}) {
@@ -164,8 +356,51 @@ export async function findReferences(asset) {
     lessons: [],
     resources: [],
     instructors: [],
+    certificateTemplates: [],
+    certificates: [],
     total: 0,
   };
+
+  // Certificate templates and issued certificates embed image refs (background, logo,
+  // signature) as { mediaAssetId, storageKey, url } — match on any of the three.
+  const mediaRefOr = [{ 'backgroundImage.mediaAssetId': asset._id }];
+  for (const field of ['organizationLogo', 'signatureImage']) {
+    mediaRefOr.push({ [`${field}.mediaAssetId`]: asset._id });
+  }
+  if (asset.storageKey) {
+    for (const field of ['backgroundImage', 'organizationLogo', 'signatureImage']) {
+      mediaRefOr.push({ [`${field}.storageKey`]: asset.storageKey });
+    }
+  }
+  if (asset.secureUrl) {
+    for (const field of ['backgroundImage', 'organizationLogo', 'signatureImage']) {
+      mediaRefOr.push({ [`${field}.url`]: asset.secureUrl });
+    }
+  }
+  const snapshotOr = mediaRefOr.map((cond) => {
+    const [key, value] = Object.entries(cond)[0];
+    return { [`templateSnapshot.${key}`]: value };
+  });
+
+  const [templates, issued] = await Promise.all([
+    CertificateTemplate.find({ deletedAt: null, $or: mediaRefOr })
+      .select('_id name templateCode')
+      .limit(50),
+    Certificate.find({ deletedAt: null, $or: snapshotOr })
+      .select('_id certificateNumber courseNameSnapshot')
+      .limit(50),
+  ]);
+  refs.certificateTemplates = templates.map((t) => ({
+    id: t._id.toString(),
+    title: t.name,
+    slug: t.templateCode,
+    type: 'certificate_template',
+  }));
+  refs.certificates = issued.map((c) => ({
+    id: c._id.toString(),
+    title: c.certificateNumber || c.courseNameSnapshot || 'Certificate',
+    type: 'issued_certificate',
+  }));
 
   if (asset.storageProvider === 'cloudinary' && asset.publicId) {
     const courses = await Course.find({
@@ -227,11 +462,28 @@ export async function findReferences(asset) {
     });
   }
 
-  // Deduplicate rough totals
+  // Deduplicate by id within each group (an asset can match a record via several fields)
+  // and across the rough total.
+  const dedupe = (arr) => {
+    const seen = new Set();
+    return arr.filter((r) => {
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
+  };
+  refs.courses = dedupe(refs.courses);
+  refs.lessons = dedupe(refs.lessons);
+  refs.resources = dedupe(refs.resources);
+  refs.certificateTemplates = dedupe(refs.certificateTemplates);
+  refs.certificates = dedupe(refs.certificates);
+
   refs.total =
-    new Set(refs.courses.map((r) => r.id)).size +
-    new Set(refs.lessons.map((r) => r.id)).size +
-    new Set(refs.resources.map((r) => r.id)).size;
+    refs.courses.length +
+    refs.lessons.length +
+    refs.resources.length +
+    refs.certificateTemplates.length +
+    refs.certificates.length;
 
   return refs;
 }
@@ -247,6 +499,8 @@ export async function deleteMedia(req, id) {
     ...references.courses.filter((r) => r.type !== 'linked_courseId'),
     ...references.lessons.filter((r) => r.type !== 'linked_lessonId'),
     ...references.resources.filter((r) => r.type !== 'linked_resourceId'),
+    ...references.certificateTemplates,
+    ...references.certificates,
   ];
   if (blocking.length > 0) {
     throw new AppError('Media is still referenced', 409, 'MEDIA_IN_USE', {
@@ -254,6 +508,8 @@ export async function deleteMedia(req, id) {
         courses: references.courses.filter((r) => r.type !== 'linked_courseId'),
         lessons: references.lessons.filter((r) => r.type !== 'linked_lessonId'),
         resources: references.resources.filter((r) => r.type !== 'linked_resourceId'),
+        certificateTemplates: references.certificateTemplates,
+        certificates: references.certificates,
       },
     });
   }
@@ -691,7 +947,10 @@ export async function streamMediaView(req, res, mediaId) {
   if (payload.type !== 'media_view' || payload.mediaId !== mediaId) {
     throw new AppError('View token mismatch', 403, 'VIEW_TOKEN_MISMATCH');
   }
-  if (payload.sub !== req.user._id.toString()) {
+  // The signed view token is the capability (issued only after access checks at
+  // /playback). When a session is also present, enforce same-user — mirrors the
+  // lesson video stream behaviour.
+  if (req.user && payload.sub !== req.user._id.toString()) {
     throw new AppError('View token user mismatch', 403, 'VIEW_TOKEN_MISMATCH');
   }
 
@@ -713,6 +972,10 @@ export async function streamMediaView(req, res, mediaId) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'private, no-store');
   res.setHeader('Accept-Ranges', 'bytes');
+  // Helmet defaults CORP to same-origin, which blocks cross-origin <video>
+  // (no-cors) requests. The signed view token is the authorization capability,
+  // so allow cross-origin embedding for this route only — do not weaken Helmet globally.
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);

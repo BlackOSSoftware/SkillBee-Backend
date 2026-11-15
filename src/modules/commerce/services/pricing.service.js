@@ -26,6 +26,17 @@ export function assertCoursePurchasable(course, now = new Date()) {
   if (!course || course.deletedAt) {
     throw new AppError('Course not found', 404, 'COURSE_NOT_FOUND');
   }
+  const effectiveType =
+    course.effectiveCourseType?.() ||
+    course.courseType ||
+    (course.pricing?.type === 'free' ? 'FREE' : 'PRE_RECORDED');
+  if (effectiveType === 'LIVE_SESSION') {
+    throw new AppError(
+      'Live session courses require an application — direct purchase is not allowed',
+      400,
+      'LIVE_COURSE_APPLICATION_REQUIRED'
+    );
+  }
   if (course.status !== COURSE_STATUS.PUBLISHED) {
     throw new AppError('Course is not available for purchase', 400, 'COURSE_NOT_PUBLISHED');
   }

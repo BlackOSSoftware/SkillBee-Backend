@@ -4,6 +4,7 @@ import { Course } from '../../../models/Course.js';
 import { AppError } from '../../../utils/AppError.js';
 import { ensureUniqueCourseSlug } from '../../courses/services/courseSlug.service.js';
 import { invalidateCourseCaches } from '../../../services/cache/invalidation.service.js';
+import { buildPagination, getSkip } from '../../../utils/pagination.js';
 import {
   absoluteUrl,
   coursePublicPath,
@@ -43,6 +44,38 @@ export function mapCourseSeoResponse(course, settings) {
     schemaData: seo.schemaData || {},
   };
 }
+/**
+ * Minimal course list for the SEO course picker.
+ * Guarded by seo.manage — intentionally separate from /admin/courses so
+ * SEO-only roles can pick a course without course-management permissions.
+ */
+export async function listCoursesForSeo({ search, page = 1, limit = 20 } = {}) {
+  const filter = { deletedAt: null };
+  const term = String(search || '').trim();
+  if (term) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    filter.title = { $regex: escaped, $options: 'i' };
+  }
+  const [rows, total] = await Promise.all([
+    Course.find(filter)
+      .select('_id title slug status')
+      .sort({ title: 1 })
+      .skip(getSkip({ page, limit }))
+      .limit(limit)
+      .lean(),
+    Course.countDocuments(filter),
+  ]);
+  return {
+    data: rows.map((c) => ({
+      id: c._id.toString(),
+      title: c.title,
+      slug: c.slug,
+      status: c.status,
+    })),
+    pagination: buildPagination({ page, limit, total }),
+  };
+}
+
 
 export async function getCourseSeo(courseId) {
   const course = await Course.findOne({ _id: courseId, deletedAt: null });

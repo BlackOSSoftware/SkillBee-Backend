@@ -46,7 +46,10 @@ export async function listStudentAssignments(req, query = {}) {
 
     const filter = {
       deletedAt: null,
-      status: ASSIGNMENT_STATUS.PUBLISHED,
+      // Show published AND closed assignments. Closed ones remain visible
+      // (read-only) so students can still see their submission/feedback;
+      // submission itself is blocked by assertCanSubmitNow.
+      status: { $in: [ASSIGNMENT_STATUS.PUBLISHED, ASSIGNMENT_STATUS.CLOSED] },
       courseId: query.courseId || { $in: courseIds },
     };
 
@@ -109,7 +112,12 @@ export async function listStudentAssignments(req, query = {}) {
 export async function getStudentAssignment(req, id) {
   const assignment = await Assignment.findOne({ _id: id, deletedAt: null });
   if (!assignment) throw new AppError('Assignment not found', 404, 'ASSIGNMENT_NOT_FOUND');
-  if (assignment.status !== ASSIGNMENT_STATUS.PUBLISHED) {
+  // Published and closed assignments are viewable by enrolled students.
+  // Closed ones are read-only — submission is blocked separately.
+  if (
+    assignment.status !== ASSIGNMENT_STATUS.PUBLISHED &&
+    assignment.status !== ASSIGNMENT_STATUS.CLOSED
+  ) {
     throw new AppError('Assignment is not available', 403, 'ASSIGNMENT_UNAVAILABLE');
   }
   await assertStudentEnrollment(req.user._id, assignment.courseId);
@@ -361,7 +369,11 @@ export async function listAllSubmissionsAdmin(req, query = {}) {
       instructorIds: req.user._id,
       deletedAt: null,
     }).select('_id');
-    filter.courseId = { $in: courses.map((c) => c._id) };
+    const ids = courses.map((c) => c._id);
+    // Keep the caller's courseId filter but never leave the instructor's scope
+    filter.courseId = query.courseId
+      ? { $in: ids.filter((id) => id.toString() === String(query.courseId)) }
+      : { $in: ids };
   }
 
   const page = Number(query.page) || 1;

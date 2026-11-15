@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../../middleware/authenticate.js';
-import { requirePermissions, requireAdminAccess } from '../../../middleware/authorize.js';
+import { requirePermissions } from '../../../middleware/authorize.js';
 import { validate, validateRequest } from '../../../middleware/validate.js';
 import { PERMISSIONS } from '../../../config/security.js';
 import * as categoryController from '../controllers/category.controller.js';
@@ -15,7 +15,8 @@ import {
 
 const router = Router();
 
-router.use(authenticate, requireAdminAccess(), requirePermissions(PERMISSIONS.CATEGORIES_MANAGE));
+// Permission-based only — custom roles with categories.manage work too.
+router.use(authenticate, requirePermissions(PERMISSIONS.CATEGORIES_MANAGE));
 
 router.get('/', validate(listCategoriesQuerySchema, 'query'), categoryController.listCategories);
 router.post('/', validate(createCategorySchema), categoryController.createCategory);

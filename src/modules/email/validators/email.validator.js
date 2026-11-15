@@ -26,7 +26,7 @@ export const emailLogQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   recipient: z.string().trim().email().optional(),
-  status: z.enum(['queued', 'processing', 'sent', 'failed']).optional(),
+  status: z.enum(['queued', 'processing', 'sent', 'failed', 'simulated']).optional(),
   eventType: z.string().trim().max(80).optional(),
   startDate: z.coerce.date().optional(),
   endDate: z.coerce.date().optional(),

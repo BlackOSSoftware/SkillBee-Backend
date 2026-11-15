@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { authenticate } from '../../../middleware/authenticate.js';
-import { requireCourseStaffAccess } from '../../../middleware/authorize.js';
 import { validateRequest } from '../../../middleware/validate.js';
 import adminCourseRoutes, { reviewModerationRouter } from './adminCourse.routes.js';
 import categoryRoutes from './category.routes.js';
@@ -47,7 +46,10 @@ export function mountCourseRoutes(app, apiPrefix) {
   app.use(`${apiPrefix}/student/reviews`, studentReviews);
 
   const adminLessonMount = Router();
-  adminLessonMount.use(authenticate, requireCourseStaffAccess());
+  // authenticate only — a role-slug gate here would block custom roles from every
+  // later-mounted admin module (seo, contact, blogs…). Each lesson/topic/resource
+  // route enforces its own requireAnyPermission instead.
+  adminLessonMount.use(authenticate);
   adminLessonMount.use(topicAdminRouter);
   adminLessonMount.use(lessonRoutes);
   adminLessonMount.use(adminResourceRouter);

@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { env } from '../../../config/env.js';
-import { COURSE_STATUS, ROLE_SLUGS } from '../../../config/security.js';
+import { COURSE_STATUS, COURSE_TYPES, ROLE_SLUGS } from '../../../config/security.js';
 import { Course } from '../../../models/Course.js';
 import { CourseCategory } from '../../../models/CourseCategory.js';
 import { CourseEnrollment } from '../../../models/CourseEnrollment.js';
@@ -55,18 +55,69 @@ async function validateInstructorIds(instructorIds = []) {
   return instructorIds;
 }
 
-function normalizePricing(pricing) {
+function normalizePricing(pricing, courseType = null) {
   if (!pricing) {
+    if (courseType === 'PRE_RECORDED') {
+      return { type: 'paid', regularPrice: 0, salePrice: null, currency: 'INR' };
+    }
     return { type: 'free', regularPrice: 0, salePrice: null, currency: 'INR' };
   }
-  if (pricing.type === 'free') {
+  if (courseType === 'FREE' || pricing.type === 'free') {
     return {
       ...pricing,
+      type: 'free',
       regularPrice: 0,
       salePrice: null,
     };
   }
   return pricing;
+}
+
+/**
+ * Mongo filter for courseType that stays backward compatible with
+ * legacy documents where courseType was never set (resolved via pricing.type).
+ */
+export function courseTypeFilter(courseType) {
+  if (!courseType) return {};
+  if (courseType === 'LIVE_SESSION') return { courseType: 'LIVE_SESSION' };
+  if (courseType === 'FREE') {
+    return {
+      $or: [
+        { courseType: 'FREE' },
+        { courseType: null, 'pricing.type': 'free' },
+      ],
+    };
+  }
+  // PRE_RECORDED
+  return {
+    $or: [
+      { courseType: 'PRE_RECORDED' },
+      {
+        courseType: null,
+        $or: [{ 'pricing.type': 'paid' }, { 'pricing.type': { $exists: false } }],
+      },
+    ],
+  };
+}
+
+/**
+ * Validate courseType ↔ pricing consistency on the merged document.
+ * FREE → pricing must be free. PRE_RECORDED → paid pricing with price > 0.
+ * LIVE_SESSION → pricing unrestricted (application-based enrollment).
+ */
+function assertCourseTypePricing(course) {
+  const type = course.effectiveCourseType ? course.effectiveCourseType() : course.courseType;
+  const pricing = course.pricing || {};
+  if (type === 'FREE' && pricing.type !== 'free') {
+    throw new AppError('FREE courses must use free pricing', 422, 'COURSE_TYPE_PRICING');
+  }
+  if (type === 'PRE_RECORDED' && !(pricing.type === 'paid' && pricing.regularPrice > 0)) {
+    throw new AppError(
+      'PRE_RECORDED courses require paid pricing with regularPrice > 0',
+      422,
+      'COURSE_TYPE_PRICING'
+    );
+  }
 }
 
 export async function listCourses(req) {
@@ -83,6 +134,7 @@ export async function listCourses(req) {
   if (query.level) filter.level = query.level;
   if (query.language) filter.language = query.language;
   if (query.pricingType) filter['pricing.type'] = query.pricingType;
+  if (query.courseType) Object.assign(filter, courseTypeFilter(query.courseType));
   if (query.isFeatured !== undefined) filter.isFeatured = query.isFeatured;
   if (query.startDate || query.endDate) {
     filter.createdAt = {};
@@ -131,19 +183,29 @@ export async function createCourse(req, input) {
   const categoryIds = await validateCategoryIds(input.categoryIds || []);
   const instructorIds = await validateInstructorIds(input.instructorIds || []);
 
+  // Backward compatible: legacy clients omit courseType — derive it from pricing.
+  const courseType =
+    input.courseType ||
+    (input.pricing?.type === 'paid' ? 'PRE_RECORDED' : 'FREE');
+  if (!COURSE_TYPES.includes(courseType)) {
+    throw new AppError('Invalid course type', 400, 'INVALID_COURSE_TYPE');
+  }
+
   const course = await Course.create({
     ...input,
     slug,
+    courseType,
     description: sanitizeRichText(input.description || ''),
     thumbnail: mapThumbnail(input.thumbnail) ?? null,
     gallery: mapGallery(input.gallery) || [],
     categoryIds,
     instructorIds,
-    pricing: normalizePricing(input.pricing),
+    pricing: normalizePricing(input.pricing, courseType),
     status: COURSE_STATUS.DRAFT,
     createdBy: req.user._id,
     updatedBy: req.user._id,
   });
+  assertCourseTypePricing(course);
 
   await invalidateCourseCaches({ slug: course.slug, courseId: course._id.toString() });
   return course.toAdminObject();
@@ -173,6 +235,12 @@ export async function updateCourse(req, id, input) {
   }
   if (input.level !== undefined) course.level = input.level;
   if (input.language !== undefined) course.language = input.language;
+  if (input.courseType !== undefined) {
+    if (!COURSE_TYPES.includes(input.courseType)) {
+      throw new AppError('Invalid course type', 400, 'INVALID_COURSE_TYPE');
+    }
+    course.courseType = input.courseType;
+  }
   if (input.durationValue !== undefined) course.durationValue = input.durationValue;
   if (input.durationUnit !== undefined) course.durationUnit = input.durationUnit;
   if (input.isFeatured !== undefined) course.isFeatured = input.isFeatured;
@@ -190,17 +258,36 @@ export async function updateCourse(req, id, input) {
     };
   }
   if (input.expiry !== undefined) course.expiry = { ...course.expiry.toObject?.() || course.expiry, ...input.expiry };
+  if (input.liveSession !== undefined) {
+    if (course.effectiveCourseType() !== 'LIVE_SESSION') {
+      throw new AppError(
+        'liveSession details are only allowed for LIVE_SESSION courses',
+        400,
+        'INVALID_COURSE_TYPE'
+      );
+    }
+    course.liveSession = {
+      ...(course.liveSession?.toObject?.() || course.liveSession || {}),
+      ...input.liveSession,
+    };
+  }
   if (input.seo !== undefined) course.seo = { ...course.seo.toObject?.() || course.seo, ...input.seo };
   if (input.pricing !== undefined) {
     if (!isPlatformAdmin(req.role)) {
       throw new AppError('Only admins can manage pricing', 403, 'FORBIDDEN');
     }
-    course.pricing = normalizePricing({
-      ...(course.pricing.toObject?.() || course.pricing),
-      ...input.pricing,
-    });
+    course.pricing = normalizePricing(
+      {
+        ...(course.pricing.toObject?.() || course.pricing),
+        ...input.pricing,
+      },
+      course.effectiveCourseType()
+    );
   }
 
+  if (input.courseType !== undefined || input.pricing !== undefined) {
+    assertCourseTypePricing(course);
+  }
   course.updatedBy = req.user._id;
   await course.save();
 
@@ -283,6 +370,20 @@ async function assertPublishReady(course) {
   if (course.pricing?.type === 'paid' && !(course.pricing.regularPrice > 0)) {
     throw new AppError('Paid course pricing is invalid', 422, 'PUBLISH_VALIDATION');
   }
+  const effectiveType = course.effectiveCourseType?.() || course.courseType;
+  if (effectiveType === 'FREE' && course.pricing?.type !== 'free') {
+    throw new AppError('FREE courses must use free pricing', 422, 'PUBLISH_VALIDATION');
+  }
+  if (
+    effectiveType === 'PRE_RECORDED' &&
+    !(course.pricing?.type === 'paid' && course.pricing.regularPrice > 0)
+  ) {
+    throw new AppError(
+      'PRE_RECORDED courses require paid pricing with regularPrice > 0',
+      422,
+      'PUBLISH_VALIDATION'
+    );
+  }
 
   const lessonCount = await CourseLesson.countDocuments({
     courseId: course._id,
@@ -350,6 +451,8 @@ export async function duplicateCourse(req, id) {
       instructorIds: source.instructorIds,
       level: source.level,
       language: source.language,
+      courseType: source.courseType || source.effectiveCourseType?.() || null,
+      liveSession: source.liveSession?.toObject?.() || source.liveSession || {},
       durationValue: source.durationValue,
       durationUnit: source.durationUnit,
       status: COURSE_STATUS.DRAFT,

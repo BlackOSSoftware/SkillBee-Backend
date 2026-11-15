@@ -15,6 +15,7 @@ export const ENROLLMENT_TYPES = Object.freeze([
   'manual',
   'free',
   'admin_granted',
+  'live_application', // created when a live-course application is converted
   'migration', // legacy
 ]);
 

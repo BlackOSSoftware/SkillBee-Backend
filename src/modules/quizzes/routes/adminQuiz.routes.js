@@ -1,9 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../../middleware/authenticate.js';
-import {
-  requireAnyPermission,
-  requireCourseStaffAccess,
-} from '../../../middleware/authorize.js';
+import { requireAnyPermission } from '../../../middleware/authorize.js';
 import { validate, validateRequest } from '../../../middleware/validate.js';
 import { PERMISSIONS } from '../../../config/security.js';
 import * as quizController from '../controllers/quiz.controller.js';
@@ -30,7 +27,8 @@ import {
 
 const router = Router();
 
-router.use(authenticate, requireCourseStaffAccess());
+// authenticate only — per-route requireAnyPermission enforces access.
+router.use(authenticate);
 
 router.get(
   '/',
@@ -143,7 +141,8 @@ router.get(
 export default router;
 
 export const adminAttemptRouter = Router();
-adminAttemptRouter.use(authenticate, requireCourseStaffAccess());
+// authenticate only — per-route requireAnyPermission enforces access.
+adminAttemptRouter.use(authenticate);
 
 adminAttemptRouter.get(
   '/',

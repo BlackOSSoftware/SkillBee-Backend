@@ -42,6 +42,7 @@ export async function notifyUser({
   data = {},
   createdBy = null,
   eventKey = null,
+  campaignId = null,
   channels = { inApp: true, push: true },
 }) {
   const payload = {
@@ -54,6 +55,7 @@ export async function notifyUser({
     data: safeData(data),
     createdBy,
     eventKey: eventKey || null,
+    campaignId: campaignId || null,
     deliveryStatus: DELIVERY_STATUS.PENDING,
   };
 
@@ -128,6 +130,156 @@ export async function listAdminNotifications(query) {
   return {
     data: rows.map((r) => AppNotification.hydrate(r).toSafeObject()),
     pagination: buildPagination({ page: query.page, limit: query.limit, total }),
+  };
+}
+
+/**
+ * List notification campaigns (grouped by campaignId).
+ * Each campaign represents one admin bulk-send action.
+ * Notifications without a campaignId are treated as individual (campaignId = null).
+ */
+export async function listCampaigns(query) {
+  const filter = { deletedAt: null };
+  if (query.type) filter.type = query.type;
+  if (query.createdBy) filter.createdBy = query.createdBy;
+
+  // Aggregate by campaignId (null = individual notification)
+  const pipeline = [
+    { $match: filter },
+    {
+      $group: {
+        _id: { $ifNull: ['$campaignId', '$_id'] },
+        campaignId: { $first: '$campaignId' },
+        title: { $first: '$title' },
+        message: { $first: '$message' },
+        type: { $first: '$type' },
+        category: { $first: '$category' },
+        createdBy: { $first: '$createdBy' },
+        createdAt: { $first: '$createdAt' },
+        recipientCount: { $sum: 1 },
+        sentCount: {
+          $sum: { $cond: [{ $eq: ['$deliveryStatus', 'sent'] }, 1, 0] },
+        },
+        failedCount: {
+          $sum: { $cond: [{ $eq: ['$deliveryStatus', 'failed'] }, 1, 0] },
+        },
+        skippedCount: {
+          $sum: { $cond: [{ $eq: ['$deliveryStatus', 'skipped'] }, 1, 0] },
+        },
+        partialCount: {
+          $sum: { $cond: [{ $eq: ['$deliveryStatus', 'partial'] }, 1, 0] },
+        },
+        pendingCount: {
+          $sum: { $cond: [{ $eq: ['$deliveryStatus', 'pending'] }, 1, 0] },
+        },
+        readCount: {
+          $sum: { $cond: ['$isRead', 1, 0] },
+        },
+      },
+    },
+    // Post-group filter for isRead (campaign-level: any read = true, none read = false)
+    ...(query.isRead === true
+      ? [{ $match: { readCount: { $gt: 0 } } }]
+      : query.isRead === false
+        ? [{ $match: { readCount: { $eq: 0 } } }]
+        : []),
+    { $sort: { createdAt: -1 } },
+    { $skip: getSkip(query) },
+    { $limit: query.limit },
+  ];
+
+  // Build the same post-group filter for the count pipeline
+  const countPipeline = [
+    { $match: filter },
+    {
+      $group: {
+        _id: { $ifNull: ['$campaignId', '$_id'] },
+        readCount: {
+          $sum: { $cond: ['$isRead', 1, 0] },
+        },
+        recipientCount: { $sum: 1 },
+      },
+    },
+    ...(query.isRead === true
+      ? [{ $match: { readCount: { $gt: 0 } } }]
+      : query.isRead === false
+        ? [{ $match: { readCount: { $eq: 0 } } }]
+        : []),
+    { $count: 'total' },
+  ];
+
+  const [campaigns, total] = await Promise.all([
+    AppNotification.aggregate(pipeline),
+    AppNotification.aggregate(countPipeline).then((r) => r[0]?.total ?? 0),
+  ]);
+
+  return {
+    data: campaigns.map((c) => ({
+      campaignId: c.campaignId || c._id.toString(),
+      title: c.title,
+      message: c.message,
+      type: c.type,
+      category: c.category,
+      createdBy: c.createdBy?.toString?.() || null,
+      createdAt: c.createdAt,
+      recipientCount: c.recipientCount,
+      delivery: {
+        sent: c.sentCount,
+        failed: c.failedCount,
+        skipped: c.skippedCount,
+        partial: c.partialCount,
+        pending: c.pendingCount,
+      },
+      readCount: c.readCount,
+    })),
+    pagination: buildPagination({ page: query.page, limit: query.limit, total }),
+  };
+}
+
+/**
+ * Get campaign details with recipient-level delivery records.
+ */
+export async function getCampaign(campaignId) {
+  const filter = { deletedAt: null };
+  // If campaignId looks like a single notification ID (no colon), treat as individual
+  if (!campaignId.includes(':')) {
+    filter._id = campaignId;
+  } else {
+    filter.campaignId = campaignId;
+  }
+
+  const rows = await AppNotification.find(filter)
+    .sort({ createdAt: -1 })
+    .lean();
+
+  if (!rows.length) throw new AppError('Campaign not found', 404, 'CAMPAIGN_NOT_FOUND');
+
+  const first = rows[0];
+  const recipients = rows.map((r) => AppNotification.hydrate(r).toSafeObject());
+
+  const delivery = { sent: 0, failed: 0, skipped: 0, partial: 0, pending: 0 };
+  let readCount = 0;
+  for (const r of recipients) {
+    if (r.deliveryStatus === 'sent') delivery.sent += 1;
+    else if (r.deliveryStatus === 'failed') delivery.failed += 1;
+    else if (r.deliveryStatus === 'skipped') delivery.skipped += 1;
+    else if (r.deliveryStatus === 'partial') delivery.partial += 1;
+    else delivery.pending += 1;
+    if (r.isRead) readCount += 1;
+  }
+
+  return {
+    campaignId: first.campaignId || first._id.toString(),
+    title: first.title,
+    message: first.message,
+    type: first.type,
+    category: first.category,
+    createdBy: first.createdBy?.toString?.() || null,
+    createdAt: first.createdAt,
+    recipientCount: recipients.length,
+    delivery,
+    readCount,
+    recipients,
   };
 }
 
@@ -220,7 +372,7 @@ export async function createAdminNotification(req, input) {
   };
 
   const type = input.type || (input.courseId ? 'course_announcement' : 'custom');
-  const batchId = `custom:${req.user._id}:${Date.now()}`;
+  const campaignId = `custom:${req.user._id}:${Date.now()}`;
   let created = 0;
   let duplicates = 0;
   const seen = new Set();
@@ -229,7 +381,7 @@ export async function createAdminNotification(req, input) {
     const rid = recipientId.toString();
     if (seen.has(rid)) continue;
     seen.add(rid);
-    const eventKey = `${batchId}:${rid}`;
+    const eventKey = `${campaignId}:${rid}`;
     // Fire-and-forget sequential to keep load predictable; still streaming cursor
     // eslint-disable-next-line no-await-in-loop
     const result = await notifyUser({
@@ -241,15 +393,16 @@ export async function createAdminNotification(req, input) {
       category: input.category || 'announcement',
       data: {
         courseId: input.courseId || null,
-        batchId,
+        batchId: campaignId,
       },
       createdBy: req.user._id,
       eventKey,
+      campaignId,
       channels,
     });
     if (result.duplicate) duplicates += 1;
     else created += 1;
   }
 
-  return { created, duplicates, batchId, recipientCount: seen.size };
+  return { created, duplicates, campaignId, batchId: campaignId, recipientCount: seen.size };
 }

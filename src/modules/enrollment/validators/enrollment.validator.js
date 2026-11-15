@@ -38,6 +38,10 @@ export const revokeBody = z
   })
   .default({});
 
+export const selfEnrollBody = z.object({
+  courseId: objectId,
+});
+
 export const enrollmentIdParams = z.object({
   id: objectId,
 });

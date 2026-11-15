@@ -173,7 +173,11 @@ export async function streamLearningVideo(req, res, lessonId) {
     throw new AppError('Playback token mismatch', 403, 'PLAYBACK_TOKEN_MISMATCH');
   }
 
-  if (payload.sub !== req.user._id.toString()) {
+  // The signed playback token is the capability: it was only issued after
+  // enrollment/preview checks at /video/playback. When a session cookie is
+  // also present (optionalAuthenticate), enforce that it belongs to the same
+  // user the token was minted for.
+  if (req.user && payload.sub !== req.user._id.toString()) {
     throw new AppError('Playback token user mismatch', 403, 'PLAYBACK_TOKEN_MISMATCH');
   }
 
@@ -190,12 +194,28 @@ export async function streamLearningVideo(req, res, lessonId) {
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Type', mimeType);
   res.setHeader('Cache-Control', 'private, no-store');
+  // Helmet defaults CORP to same-origin, which blocks cross-origin <video>
+  // (no-cors) requests with ERR_BLOCKED_BY_RESPONSE.NotSameOrigin. The signed
+  // playback token is the authorization capability, so allow cross-origin
+  // embedding for this route only — do not weaken Helmet globally.
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-    if (!match) throw new AppError('Invalid Range header', 416, 'INVALID_RANGE');
-    const start = match[1] ? Number(match[1]) : 0;
-    const end = match[2] ? Number(match[2]) : fileSize - 1;
+    if (!match || (match[1] === '' && match[2] === '')) {
+      throw new AppError('Invalid Range header', 416, 'INVALID_RANGE');
+    }
+    let start;
+    let end;
+    if (match[1] === '' && match[2] !== '') {
+      // Suffix range: bytes=-N → the last N bytes of the file.
+      const suffix = Number(match[2]);
+      start = Math.max(fileSize - suffix, 0);
+      end = fileSize - 1;
+    } else {
+      start = match[1] ? Number(match[1]) : 0;
+      end = match[2] ? Number(match[2]) : fileSize - 1;
+    }
     if (start >= fileSize || end >= fileSize || start > end) {
       res.setHeader('Content-Range', `bytes */${fileSize}`);
       throw new AppError('Requested range not satisfiable', 416, 'INVALID_RANGE');

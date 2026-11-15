@@ -107,6 +107,9 @@ export const PERMISSIONS = Object.freeze({
   ASSIGNMENTS_PUBLISH: 'assignments.publish',
   ASSIGNMENTS_SUBMISSIONS_READ: 'assignments.submissions.read',
   ASSIGNMENTS_GRADE: 'assignments.grade',
+
+  ENQUIRIES_READ: 'enquiries.read',
+  ENQUIRIES_MANAGE: 'enquiries.manage',
 });
 
 export const MEDIA_PERMISSIONS = [
@@ -365,6 +368,12 @@ export const PERMISSION_CATALOG = Object.freeze([
     module: 'assignments',
   },
   { code: PERMISSIONS.ASSIGNMENTS_GRADE, name: 'Grade assignment submissions', module: 'assignments' },
+  { code: PERMISSIONS.ENQUIRIES_READ, name: 'Read enquiries and support tickets', module: 'enquiries' },
+  {
+    code: PERMISSIONS.ENQUIRIES_MANAGE,
+    name: 'Manage enquiries and support tickets',
+    module: 'enquiries',
+  },
 ]);
 
 export const QUESTION_TYPES = Object.freeze([
@@ -441,6 +450,8 @@ export const DEFAULT_ROLES = Object.freeze([
       PERMISSIONS.ROLES_DELETE,
       PERMISSIONS.PERMISSIONS_READ,
       PERMISSIONS.PERMISSIONS_ASSIGN,
+      PERMISSIONS.ENQUIRIES_READ,
+      PERMISSIONS.ENQUIRIES_MANAGE,
       ...ADMIN_COURSE_PERMISSIONS,
     ],
   },
@@ -465,6 +476,62 @@ export const COURSE_STATUS = Object.freeze({
   PUBLISHED: 'published',
   ARCHIVED: 'archived',
 });
+
+/**
+ * Course delivery type — independent of category and pricing.type.
+ * FREE: direct self-enrollment, no payment.
+ * PRE_RECORDED: self-enrollment via verified payment (existing checkout flow).
+ * LIVE_SESSION: application-based enrollment reviewed by admin.
+ */
+export const COURSE_TYPES = Object.freeze(['FREE', 'PRE_RECORDED', 'LIVE_SESSION']);
+
+export const LIVE_APPLICATION_STATUSES = Object.freeze([
+  'PENDING',
+  'UNDER_REVIEW',
+  'CONTACTED',
+  'APPROVED',
+  'REJECTED',
+  'CONVERTED',
+]);
+
+export const LIVE_COURSE_INTERESTS = Object.freeze([
+  'DevOps',
+  'Computerized System Validation Course',
+  'Basic End User LIMS application course',
+  'Advance Adminstrative LIMS application course',
+  'Pharmacovigilance Diploma & Certification Courses',
+  'Sterile Manufacturing',
+  'Clinical Data Management Diploma & Certification Courses',
+  'Medical writing Course',
+  'Integrated industrial course of PV, CR, CDMS & DRA',
+  'Drug Regulatory Affairs Certification',
+  'Pharmaceuticals Engineering Course',
+  'Pharmaceuticals Validation Course',
+  'Pharmaceuticals Quality Assurance and validation Professuonal Course',
+  'Manufacturing Execuation System Course',
+  'SAP S4 HANA',
+  'Pharmaceuticals GMP proffesional course',
+  'Manufacturing Execuation Application Course',
+  'Empower 3 Course',
+  'Other Course (Mention in Comment Box)',
+]);
+
+export const LIVE_COURSE_REFERRAL_SOURCES = Object.freeze([
+  'LinkedIn',
+  'Website',
+  'Referral',
+  'Training Institute / Partner',
+  'Google Search',
+  'Friend / Colleague',
+  'Existing Student / Alumni',
+  'Company / Employer',
+  'YouTube',
+  'WhatsApp',
+  'Advertisement',
+  'Instagram',
+  'Facebook',
+  'Other',
+]);
 
 export const COURSE_LEVELS = Object.freeze([
   'beginner',
@@ -496,6 +563,46 @@ export const QUESTION_STATUS = Object.freeze({
 });
 
 export const QUESTION_SENDER_ROLES = Object.freeze({
+  STUDENT: 'student',
+  ADMIN: 'admin',
+  INSTRUCTOR: 'instructor',
+});
+
+/** Shared lifecycle for website enquiries and student support tickets. */
+export const SUPPORT_STATUS = Object.freeze({
+  OPEN: 'open',
+  REVIEWED: 'reviewed',
+  RESOLVED: 'resolved',
+  CLOSED: 'closed',
+});
+
+export const ENQUIRY_CATEGORIES = Object.freeze([
+  'general',
+  'courses',
+  'pricing',
+  'technical',
+  'partnership',
+  'other',
+]);
+
+export const TICKET_CATEGORIES = Object.freeze([
+  'account_login',
+  'course_learning',
+  'payment_fees',
+  'certificate',
+  'technical_issue',
+  'other',
+]);
+
+export const TICKET_PRIORITIES = Object.freeze(['low', 'normal', 'high', 'urgent']);
+
+/** Conversation messages: public = visible to the student/visitor, internal = staff only. */
+export const MESSAGE_VISIBILITY = Object.freeze({
+  PUBLIC: 'public',
+  INTERNAL: 'internal',
+});
+
+export const TICKET_SENDER_ROLES = Object.freeze({
   STUDENT: 'student',
   ADMIN: 'admin',
   INSTRUCTOR: 'instructor',

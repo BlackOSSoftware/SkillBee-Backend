@@ -7,6 +7,7 @@ import {
   completeLessonBody,
   lessonIdParams,
   myCoursesQuery,
+  selfEnrollBody,
 } from '../validators/enrollment.validator.js';
 
 const courseIdParam = z.object({
@@ -16,6 +17,11 @@ const courseIdParam = z.object({
 export const studentCoursesRouter = Router();
 studentCoursesRouter.use(authenticate);
 studentCoursesRouter.get('/my-courses', validateRequest({ query: myCoursesQuery }), ctrl.myCourses);
+studentCoursesRouter.post(
+  '/enrollments',
+  validateRequest({ body: selfEnrollBody }),
+  ctrl.enrollFree
+);
 studentCoursesRouter.get('/dashboard', ctrl.dashboard);
 studentCoursesRouter.get(
   '/courses/:id/progress',
