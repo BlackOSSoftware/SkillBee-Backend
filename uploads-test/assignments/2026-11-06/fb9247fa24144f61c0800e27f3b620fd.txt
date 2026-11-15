@@ -1,0 +1,5 @@
+CAPA report — Aarav Demo
+
+Root cause: the previous batch label was not removed during line clearance.
+Corrective: quarantine affected units and re-inspect.
+Preventive: add a second-person verification step to the clearance checklist.

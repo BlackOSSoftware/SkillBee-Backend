@@ -1,0 +1,5 @@
+CAPA report — Meera Demo
+
+Root cause: operator skipped the checklist under time pressure.
+Corrective: retrain the shift.
+Preventive: make the electronic checklist mandatory before batch start.
