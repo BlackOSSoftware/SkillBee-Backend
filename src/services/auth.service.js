@@ -1,9 +1,16 @@
+import crypto from 'crypto';
 import { ROLE_SLUGS, USER_STATUS, security } from '../config/security.js';
+import { env } from '../config/env.js';
 import { User } from '../models/User.js';
 import { Role } from '../models/Role.js';
 import { PasswordResetToken } from '../models/PasswordResetToken.js';
 import { AppError } from '../utils/AppError.js';
 import { normalizePhone } from '../utils/phone.js';
+import {
+  destroyCloudinaryImage,
+  uploadImageBufferToCloudinary,
+} from '../modules/media/services/cloudinary.service.js';
+import { assertSignatureMatches } from '../modules/media/utils/fileValidation.js';
 import {
   generateRawToken,
   hashToken,
@@ -205,6 +212,88 @@ export async function getCurrentUser(userId) {
   if (!user) {
     throw new AppError('User not found', 404, 'NOT_FOUND');
   }
+  return user.toSafeObject();
+}
+
+const AVATAR_CLOUDINARY_FOLDER = 'avatars';
+
+/**
+ * Extract the Cloudinary public_id from a stored secure_url so the previous
+ * avatar asset can be destroyed after a successful replace/remove. Returns
+ * null for non-Cloudinary URLs (external avatars are left untouched).
+ */
+function cloudinaryPublicIdFromUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.endsWith('res.cloudinary.com')) return null;
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const uploadIndex = segments.indexOf('upload');
+    if (uploadIndex === -1) return null;
+    const rest = segments.slice(uploadIndex + 1);
+    // Skip the optional /v<timestamp>/ version segment.
+    if (rest.length && /^v\d+$/.test(rest[0])) rest.shift();
+    if (!rest.length) return null;
+    const last = rest.length - 1;
+    rest[last] = rest[last].replace(/\.[a-z0-9]+$/i, '');
+    return rest.join('/');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Self-service profile update (PUT /auth/me). Only firstName/lastName and the
+ * profile photo are writable — protected fields are rejected upstream.
+ *
+ * Photo lifecycle is ordered so the existing image is never lost before the
+ * replacement upload succeeds:
+ *   1. upload new avatar to Cloudinary (old image untouched)
+ *   2. persist the new URL on the user
+ *   3. best-effort destroy the previous Cloudinary asset
+ */
+export async function updateCurrentUser(userId, input = {}) {
+  const user = await User.findOne(User.notDeletedFilter({ _id: userId })).populate('roleId');
+  if (!user) {
+    throw new AppError('User not found', 404, 'NOT_FOUND');
+  }
+
+  const previousImage = user.profileImage || null;
+  let uploaded = null;
+
+  if (input.file) {
+    assertSignatureMatches(input.file.buffer, input.file.mimetype);
+    const publicId = `avatar-${user._id.toString()}-${crypto.randomBytes(4).toString('hex')}`;
+    uploaded = await uploadImageBufferToCloudinary(input.file.buffer, {
+      folder: `${env.CLOUDINARY_UPLOAD_FOLDER}/${AVATAR_CLOUDINARY_FOLDER}`,
+      publicId,
+      originalFileName: input.file.originalname,
+    });
+    user.profileImage = uploaded.secureUrl;
+  } else if (input.removeProfileImage) {
+    user.profileImage = null;
+  }
+
+  if (input.firstName !== undefined) user.firstName = input.firstName;
+  if (input.lastName !== undefined) user.lastName = input.lastName;
+
+  try {
+    await user.save();
+  } catch (err) {
+    // The DB write failed after a successful upload — remove the orphan.
+    if (uploaded?.publicId) {
+      await destroyCloudinaryImage(uploaded.publicId).catch(() => {});
+    }
+    throw err;
+  }
+
+  if (previousImage && previousImage !== user.profileImage) {
+    const oldPublicId = cloudinaryPublicIdFromUrl(previousImage);
+    if (oldPublicId) {
+      await destroyCloudinaryImage(oldPublicId).catch(() => {});
+    }
+  }
+
   return user.toSafeObject();
 }
 

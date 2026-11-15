@@ -99,6 +99,20 @@ export const me = asyncHandler(async (req, res) => {
   });
 });
 
+export const updateMe = asyncHandler(async (req, res) => {
+  const user = await authService.updateCurrentUser(req.user._id, {
+    firstName: req.body.firstName,
+    lastName: req.body.lastName,
+    removeProfileImage: req.body.removeProfileImage,
+    file: req.file,
+  });
+
+  res.json({
+    success: true,
+    data: { user },
+  });
+});
+
 export const forgotPassword = asyncHandler(async (req, res) => {
   const result = await authService.requestPasswordReset(req.body.email);
 

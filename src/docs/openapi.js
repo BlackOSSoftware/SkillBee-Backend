@@ -216,6 +216,79 @@ export const openApiSpec = {
         security: bearer,
         responses: { 200: { description: 'Profile' } },
       },
+      put: {
+        tags: ['Auth'],
+        summary: 'Update own profile',
+        description:
+          'Updates the authenticated user\'s own profile. Only `firstName`, `lastName` and the profile photo are editable. ' +
+          '`email`, `phone`, `role`, `status`, verification flags and all other protected account fields cannot be changed here — ' +
+          'requests containing them are rejected with `FIELD_NOT_EDITABLE` (400). ' +
+          'Profile photo: send a `profileImage` file (multipart) to upload/replace, or `removeProfileImage: true` to delete it. ' +
+          'The previous Cloudinary asset is destroyed only after the replacement upload and database save succeed.',
+        security: bearer,
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  firstName: { type: 'string', minLength: 1, maxLength: 80 },
+                  lastName: { type: 'string', minLength: 1, maxLength: 80 },
+                  removeProfileImage: {
+                    type: 'boolean',
+                    description: 'Set true to remove the current profile photo',
+                  },
+                },
+              },
+            },
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                properties: {
+                  firstName: { type: 'string', minLength: 1, maxLength: 80 },
+                  lastName: { type: 'string', minLength: 1, maxLength: 80 },
+                  removeProfileImage: {
+                    type: 'string',
+                    enum: ['true', 'false'],
+                    description: '"true" removes the current profile photo',
+                  },
+                  profileImage: {
+                    type: 'string',
+                    format: 'binary',
+                    description: 'Profile photo — JPEG, PNG, WebP or AVIF up to IMAGE_MAX_SIZE_MB',
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Profile updated — returns the refreshed user object',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: {
+                      type: 'object',
+                      properties: { user: { $ref: '#/components/schemas/User' } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: 'Validation error or protected field modification attempt (FIELD_NOT_EDITABLE)' },
+          401: { description: 'Authentication required' },
+          413: { description: 'File too large' },
+          415: { description: 'Unsupported image type' },
+          422: { description: 'File signature does not match declared type' },
+          503: { description: 'Cloudinary is not configured (photo upload only)' },
+        },
+      },
     },
     '/auth/forgot-password': {
       post: {

@@ -43,3 +43,18 @@ export const resetPasswordSchema = z.object({
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1).optional(),
 });
+
+/**
+ * PUT /auth/me — self-service profile update.
+ * Only firstName/lastName are editable here; email, phone and all protected
+ * account fields are rejected earlier by rejectProtectedProfileFields.
+ * removeProfileImage arrives as boolean (JSON) or 'true'/'false' (multipart).
+ */
+export const updateProfileSchema = z.object({
+  firstName: z.string().trim().min(1, 'First name is required').max(80).optional(),
+  lastName: z.string().trim().min(1, 'Last name is required').max(80).optional(),
+  removeProfileImage: z
+    .union([z.boolean(), z.literal('true'), z.literal('false')])
+    .optional()
+    .transform((value) => value === true || value === 'true'),
+});

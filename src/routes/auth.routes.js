@@ -9,7 +9,10 @@ import {
   refreshSchema,
   registerSchema,
   resetPasswordSchema,
+  updateProfileSchema,
 } from '../validators/auth.validators.js';
+import { profileImageUpload, rejectProtectedProfileFields } from '../middleware/profile.js';
+import { handleMediaMulterError } from '../modules/media/middleware/upload.middleware.js';
 
 const router = Router();
 
@@ -18,6 +21,15 @@ router.post('/login', authRateLimiter, validate(loginSchema), authController.log
 router.post('/refresh', authRateLimiter, validate(refreshSchema), authController.refresh);
 router.post('/logout', authenticate, authController.logout);
 router.get('/me', authenticate, authController.me);
+router.put(
+  '/me',
+  authenticate,
+  profileImageUpload,
+  handleMediaMulterError,
+  rejectProtectedProfileFields,
+  validate(updateProfileSchema),
+  authController.updateMe
+);
 router.post(
   '/forgot-password',
   authRateLimiter,

@@ -201,6 +201,74 @@ describe('Auth API', () => {
     assert.equal(res.body.error.code, 'LAST_SUPER_ADMIN');
   });
 
+  it('updates own profile names via PUT /auth/me', async () => {
+    const registered = await request(app)
+      .post(`${API}/auth/register`)
+      .send({ ...studentPayload, email: 'profile@example.com' });
+    const token = registered.body.data.accessToken;
+
+    const res = await request(app)
+      .put(`${API}/auth/me`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ firstName: 'Updated', lastName: 'Name' });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.user.firstName, 'Updated');
+    assert.equal(res.body.data.user.lastName, 'Name');
+    assert.equal(res.body.data.user.email, 'profile@example.com');
+
+    const me = await request(app)
+      .get(`${API}/auth/me`)
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(me.body.data.user.firstName, 'Updated');
+  });
+
+  it('rejects email and phone changes via PUT /auth/me', async () => {
+    const registered = await request(app)
+      .post(`${API}/auth/register`)
+      .send({ ...studentPayload, email: 'immutable@example.com' });
+    const token = registered.body.data.accessToken;
+
+    for (const body of [
+      { email: 'new@example.com' },
+      { phone: '+10000000000' },
+      { role: 'admin' },
+      { status: 'suspended' },
+      { emailVerified: true },
+    ]) {
+      const res = await request(app)
+        .put(`${API}/auth/me`)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+      assert.equal(res.status, 400, JSON.stringify(body));
+      assert.equal(res.body.error.code, 'FIELD_NOT_EDITABLE');
+    }
+
+    const me = await request(app)
+      .get(`${API}/auth/me`)
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(me.body.data.user.email, 'immutable@example.com');
+    assert.equal(me.body.data.user.phone, '+919876543210');
+    assert.equal(me.body.data.user.status, 'active');
+  });
+
+  it('validates PUT /auth/me payload and requires auth', async () => {
+    const registered = await request(app)
+      .post(`${API}/auth/register`)
+      .send({ ...studentPayload, email: 'validate@example.com' });
+    const token = registered.body.data.accessToken;
+
+    const bad = await request(app)
+      .put(`${API}/auth/me`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ firstName: '' });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.error.code, 'VALIDATION_ERROR');
+
+    const unauth = await request(app).put(`${API}/auth/me`).send({ firstName: 'X' });
+    assert.equal(unauth.status, 401);
+  });
+
   it('health check works', async () => {
     const res = await request(app).get('/health');
     assert.equal(res.status, 200);

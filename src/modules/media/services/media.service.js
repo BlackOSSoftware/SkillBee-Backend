@@ -443,19 +443,50 @@ export async function findReferences(asset) {
     }));
   }
 
-  if (asset.courseId) {
+  // Linked FK references carry no title of their own — resolve the target
+  // documents so the UI can show names (and build course/lesson links) instead
+  // of raw MongoIDs.
+  const [linkedCourse, linkedLesson, linkedResource] = await Promise.all([
+    asset.courseId ? Course.findById(asset.courseId).select('_id title slug').lean() : null,
+    asset.lessonId ? CourseLesson.findById(asset.lessonId).select('_id title courseId').lean() : null,
+    asset.resourceId ? CourseResource.findById(asset.resourceId).select('_id title courseId lessonId').lean() : null,
+  ]);
+
+  if (linkedCourse) {
+    refs.courses.push({
+      id: linkedCourse._id.toString(),
+      title: linkedCourse.title,
+      slug: linkedCourse.slug,
+      type: 'linked_courseId',
+    });
+  } else if (asset.courseId) {
     refs.courses.push({
       id: asset.courseId.toString(),
       type: 'linked_courseId',
     });
   }
-  if (asset.lessonId) {
+  if (linkedLesson) {
+    refs.lessons.push({
+      id: linkedLesson._id.toString(),
+      title: linkedLesson.title,
+      courseId: linkedLesson.courseId?.toString(),
+      type: 'linked_lessonId',
+    });
+  } else if (asset.lessonId) {
     refs.lessons.push({
       id: asset.lessonId.toString(),
       type: 'linked_lessonId',
     });
   }
-  if (asset.resourceId) {
+  if (linkedResource) {
+    refs.resources.push({
+      id: linkedResource._id.toString(),
+      title: linkedResource.title,
+      courseId: linkedResource.courseId?.toString(),
+      lessonId: linkedResource.lessonId?.toString(),
+      type: 'linked_resourceId',
+    });
+  } else if (asset.resourceId) {
     refs.resources.push({
       id: asset.resourceId.toString(),
       type: 'linked_resourceId',
