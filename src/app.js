@@ -61,7 +61,7 @@ export function createApp() {
   app.use(
     cors({
       // Allowed frontend origins: student app (3000), admin console (3001), instructor console (3002)
-      origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
+      origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'https://skill-nee-learner.vercel.app', 'https://skillbee-controller.vercel.app'],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
