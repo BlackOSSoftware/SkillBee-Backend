@@ -12,7 +12,8 @@ export const security = {
   cookie: {
     httpOnly: true,
     secure: env.COOKIE_SECURE || env.NODE_ENV === 'production',
-    sameSite: env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    sameSite:
+      env.COOKIE_SAME_SITE ?? (env.NODE_ENV === 'production' ? 'strict' : 'lax'),
     path: '/',
   },
   bcryptRounds: 12,

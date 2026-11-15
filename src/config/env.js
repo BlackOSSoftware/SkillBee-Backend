@@ -25,6 +25,12 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === 'true'),
+  /**
+   * SameSite cookie attribute. Use 'none' when the frontend is on a different
+   * site than the API (e.g. Vercel frontend + separate API host) — requires
+   * COOKIE_SECURE=true / HTTPS.
+   */
+  COOKIE_SAME_SITE: z.enum(['strict', 'lax', 'none']).optional(),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
@@ -196,6 +202,12 @@ if (!data.PUBLIC_SITE_URL) {
 }
 if (!data.EMAIL_FRONTEND_URL) {
   data.EMAIL_FRONTEND_URL = data.FRONTEND_BASE_URL || data.PUBLIC_SITE_URL;
+}
+if (data.COOKIE_SAME_SITE === 'none' && !(data.COOKIE_SECURE || data.NODE_ENV === 'production')) {
+  console.warn(
+    'WARNING: COOKIE_SAME_SITE=none requires secure cookies (HTTPS). ' +
+      'Set COOKIE_SECURE=true or run with NODE_ENV=production, otherwise browsers will reject the auth cookies.'
+  );
 }
 if (data.FIREBASE_PRIVATE_KEY) {
   data.FIREBASE_PRIVATE_KEY = data.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
